@@ -317,6 +317,80 @@ public class PythonGCPConverter {
         // IfExp: a if cond else b — simplified: just return the "body" branch for now
         converters.put("IfExp", (ast, node, parent) ->
                 dispatch(ast, mapOf(node, "body"), parent));
+
+        // Dict literal: {k: v, ...}
+        converters.put("Dict", (ast, node, parent) -> {
+            List<Map<String, Object>> keys   = listOf(node, "keys");
+            List<Map<String, Object>> values = listOf(node, "values");
+            @SuppressWarnings("unchecked")
+            org.twelve.gcp.common.Pair<Expression, Expression>[] pairs =
+                    new org.twelve.gcp.common.Pair[Math.min(keys.size(), values.size())];
+            for (int i = 0; i < pairs.length; i++) {
+                Expression k = (Expression) dispatch(ast, keys.get(i));
+                Expression v = (Expression) dispatch(ast, values.get(i));
+                if (k != null && v != null) pairs[i] = new org.twelve.gcp.common.Pair<>(k, v);
+            }
+            return new org.twelve.gcp.node.expression.DictNode(ast, pairs);
+        });
+
+        // If statement — process both branches transparently for any nested returns/assigns
+        converters.put("If", (ast, node, parent) -> {
+            for (Map<String, Object> stmt : listOf(node, "body"))  dispatch(ast, stmt, parent);
+            for (Map<String, Object> stmt : listOf(node, "orelse")) dispatch(ast, stmt, parent);
+            return null;
+        });
+
+        // For loop — process body
+        converters.put("For", (ast, node, parent) -> {
+            for (Map<String, Object> stmt : listOf(node, "body"))  dispatch(ast, stmt, parent);
+            return null;
+        });
+
+        // While loop — process body
+        converters.put("While", (ast, node, parent) -> {
+            for (Map<String, Object> stmt : listOf(node, "body"))  dispatch(ast, stmt, parent);
+            return null;
+        });
+
+        // With statement (context manager) — process body
+        converters.put("With", (ast, node, parent) -> {
+            for (Map<String, Object> stmt : listOf(node, "body"))  dispatch(ast, stmt, parent);
+            return null;
+        });
+
+        // Try / except — process all branches
+        converters.put("Try", (ast, node, parent) -> {
+            for (Map<String, Object> stmt : listOf(node, "body"))    dispatch(ast, stmt, parent);
+            for (Map<String, Object> stmt : listOf(node, "finalbody")) dispatch(ast, stmt, parent);
+            return null;
+        });
+
+        // BoolOp: a and b and c / a or b or c
+        converters.put("BoolOp", (ast, node, parent) -> {
+            String opType  = typeOf(mapOf(node, "op"));
+            BinaryOperator op = "And".equals(opType)
+                    ? BinaryOperator.LOGICAL_AND : BinaryOperator.LOGICAL_OR;
+            List<Map<String, Object>> valNodes = listOf(node, "values");
+            if (valNodes.isEmpty()) return null;
+            Expression result = (Expression) dispatch(ast, valNodes.getFirst());
+            for (int i = 1; i < valNodes.size(); i++) {
+                Expression right = (Expression) dispatch(ast, valNodes.get(i));
+                if (result == null || right == null) continue;
+                result = new BinaryExpression(result, right,
+                        new org.twelve.gcp.node.operator.OperatorNode<>(ast, op));
+            }
+            return result;
+        });
+
+        // Pass — no-op
+        converters.put("Pass", (ast, node, parent) -> null);
+
+        // Delete — no-op for inference
+        converters.put("Delete", (ast, node, parent) -> null);
+
+        // Global / Nonlocal declarations — no-op
+        converters.put("Global",   (ast, node, parent) -> null);
+        converters.put("Nonlocal", (ast, node, parent) -> null);
     }
 
     // ── helpers ───────────────────────────────────────────────────────────────

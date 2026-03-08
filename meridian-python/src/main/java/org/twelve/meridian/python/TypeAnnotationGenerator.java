@@ -13,6 +13,11 @@ import org.twelve.gcp.node.statement.OutlineDeclarator;
 import org.twelve.gcp.node.statement.Statement;
 import org.twelve.gcp.node.statement.VariableDeclarator;
 import org.twelve.gcp.outline.Outline;
+import org.twelve.gcp.outline.adt.Array;
+import org.twelve.gcp.outline.adt.Option;
+import org.twelve.gcp.outline.builtin.UNIT;
+import org.twelve.gcp.outline.builtin.UNKNOWN;
+import org.twelve.gcp.outline.primitive.*;
 
 import java.util.List;
 
@@ -158,43 +163,60 @@ public class TypeAnnotationGenerator {
         return null;
     }
 
-    private String typeNodeToStr(TypeNode node) {
+    String typeNodeToStr(TypeNode node) {
         if (node == null) return null;
         String lex = node.lexeme();
         return lex == null ? null : gcpTypeToPy(lex.trim());
     }
 
-    private String outlineToTypeStr(Outline outline) {
+    /**
+     * Convert a GCP inferred {@link Outline} type to its Python type string.
+     * Uses {@code instanceof} checks on the GCP type hierarchy rather than
+     * fragile class-name matching.
+     */
+    String outlineToTypeStr(Outline outline) {
         if (outline == null) return null;
-        String name = outline.getClass().getSimpleName();
-        // Map outline type class names to Python type names
-        return switch (name) {
-            case "INT"    -> "int";
-            case "LONG"   -> "int";
-            case "FLOAT"  -> "float";
-            case "DOUBLE" -> "float";
-            case "STRING" -> "str";
-            case "BOOL"   -> "bool";
-            case "UNIT"   -> "None";
-            case "UNKNOWN", "NOTHING" -> null;
-            default -> {
-                // User-defined type: use the class name as-is
-                String lex = outline.toString();
-                yield lex != null && !lex.isBlank() ? gcpTypeToPy(lex.trim()) : null;
+        if (outline instanceof UNKNOWN || outline instanceof NOTHING) return null;
+        if (outline instanceof UNIT) return "None";
+        if (outline instanceof BOOL)    return "bool";
+        if (outline instanceof INTEGER) return "int";
+        if (outline instanceof LONG)    return "int";
+        if (outline instanceof FLOAT)   return "float";
+        if (outline instanceof DECIMAL) return "float";
+        if (outline instanceof DOUBLE)  return "float";
+        if (outline instanceof NUMBER)  return "float";
+        if (outline instanceof STRING)  return "str";
+        if (outline instanceof Array a) {
+            String inner = outlineToTypeStr(a.itemOutline());
+            return inner != null ? "list[" + inner + "]" : "list";
+        }
+        if (outline instanceof Option o) {
+            // Option is a sum type (union); collect all non-null member types
+            java.util.List<String> parts = new java.util.ArrayList<>();
+            for (Outline opt : o.options()) {
+                String s = outlineToTypeStr(opt);
+                if (s != null) parts.add(s);
             }
-        };
+            if (parts.isEmpty()) return null;
+            if (parts.size() == 1) return "Optional[" + parts.getFirst() + "]";
+            return "Union[" + String.join(", ", parts) + "]";
+        }
+        // Named / user-defined type: use outline's semantic name
+        String name = outline.name();
+        return (name != null && !name.isBlank()) ? name : null;
     }
 
-    /** Translate GCP built-in type names to Python names. */
+    /** Translate GCP type-annotation lexeme strings to Python names. */
     private String gcpTypeToPy(String gcpType) {
+        if (gcpType == null) return null;
         return switch (gcpType) {
-            case "Int", "Long"         -> "int";
-            case "Float", "Double"     -> "float";
-            case "String"              -> "str";
-            case "Bool"                -> "bool";
-            case "Unit"                -> "None";
-            case "Array"               -> "list";
-            default                    -> gcpType;
+            case "Int", "Integer", "Long"   -> "int";
+            case "Float", "Double", "Decimal", "Number" -> "float";
+            case "String"                   -> "str";
+            case "Bool"                     -> "bool";
+            case "Unit", "Nothing"          -> "None";
+            case "Array"                    -> "list";
+            default                         -> gcpType;
         };
     }
 
