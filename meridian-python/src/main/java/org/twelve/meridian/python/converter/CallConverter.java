@@ -29,11 +29,19 @@ public class CallConverter extends PyConverter {
 
     @Override
     public Node convert(AST ast, Map<String, Object> pyNode, Node parent) {
-        Expression callee = (Expression) dispatch(ast, mapOf(pyNode, "func"));
+        Map<String, Object> funcNode = mapOf(pyNode, "func");
+
+        // P5-A: method call on a receiver — must be checked BEFORE dispatching callee
+        // to avoid GCP's MemberAccessorInference reporting FIELD_NOT_FOUND on primitives.
+        if ("Attribute".equals(typeOf(funcNode))) {
+            Node method = tryMethodCall(ast, funcNode, pyNode);
+            if (method != null) return method;
+        }
+
+        Expression callee = (Expression) dispatch(ast, funcNode);
         if (callee == null) return null;
 
         // P4-B: built-in function return-type inference
-        Map<String, Object> funcNode = mapOf(pyNode, "func");
         if ("Name".equals(typeOf(funcNode))) {
             String funcName = strOf(funcNode, "id");
             Node builtin = tryBuiltin(ast, funcName, pyNode);
@@ -103,6 +111,78 @@ public class CallConverter extends PyConverter {
         Expression e = (Expression) dispatch(ast, iterNode);
         if (e == null) return null;
         return new ArrayAccessor(ast, e, intLit(ast));
+    }
+
+    // ── P5-A: method call return-type inference ──────────────────────────────
+
+    /**
+     * Infers the return type of a method call on a Python built-in type
+     * (str, list, dict, set, int) without delegating to GCP's member-access
+     * inference, which would report {@code FIELD_NOT_FOUND} for primitive types.
+     *
+     * <p>Strategy: method name → canonical return-type expression.
+     * Only methods whose return type is independent of the receiver's concrete
+     * generic parameter (or derivable from it via {@link ArrayAccessor}) are handled.
+     * All others fall through to a regular {@link FunctionCallNode}.
+     *
+     * @param funcNode the {@code Attribute} AST node ({@code value} = receiver, {@code attr} = method)
+     * @param callNode the full {@code Call} AST node (for accessing args)
+     */
+    private Node tryMethodCall(AST ast, Map<String, Object> funcNode, Map<String, Object> callNode) {
+        String method = strOf(funcNode, "attr");
+        if (method == null) return null;
+
+        List<Map<String, Object>> args = listOf(callNode, "args");
+
+        return switch (method) {
+
+            // ── always → int ──────────────────────────────────────────────────
+            case "count",    // str.count(sub) / list.count(x) → int
+                 "index",    // str.index(sub) / list.index(x) → int
+                 "find",     // str.find(sub) → int
+                 "rfind",    // str.rfind(sub) → int
+                 "rindex",   // str.rindex(sub) → int
+                 "bit_length"// int.bit_length() → int
+                    -> intLit(ast);
+
+            // ── always → bool ─────────────────────────────────────────────────
+            case "startswith", "endswith",
+                 "isdigit",  "isalpha",  "isalnum",  "isspace",
+                 "isupper",  "islower",  "istitle",
+                 "isdecimal","isnumeric","isidentifier",
+                 "issubset", "issuperset","isdisjoint"
+                    -> LiteralNode.parse(ast, new Token<>(false, 0));
+
+            // ── always → str ──────────────────────────────────────────────────
+            case "upper",   "lower",    "capitalize","title",   "swapcase",
+                 "strip",   "lstrip",   "rstrip",
+                 "replace",
+                 "format",  "format_map",
+                 "join",                             // str.join(iterable) → str
+                 "zfill",   "center",   "ljust",    "rjust",
+                 "expandtabs", "encode", "decode"
+                    -> strLit(ast);
+
+            // ── str split → list[str] ─────────────────────────────────────────
+            case "split", "rsplit", "splitlines", "partition", "rpartition"
+                    -> new ArrayNode(ast, new Expression[]{ strLit(ast) });
+
+            // ── list.pop() / set.pop() → element type of receiver ─────────────
+            case "pop" -> {
+                Map<String, Object> recvNode = mapOf(funcNode, "value");
+                Expression recv = (Expression) dispatch(ast, recvNode);
+                if (recv == null) yield null;
+                yield new ArrayAccessor(ast, recv, intLit(ast));
+            }
+
+            // ── mutations that return None ────────────────────────────────────
+            case "append", "extend",  "insert",  "remove",  "discard",
+                 "add",    "clear",   "sort",    "reverse", "update",
+                 "__setitem__"
+                    -> LiteralNode.parse(ast, new Token<>(null, 0));
+
+            default -> null;
+        };
     }
 
     private static Expression intLit(AST ast)   { return LiteralNode.parse(ast, new Token<>(0L,  0)); }

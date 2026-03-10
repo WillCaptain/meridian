@@ -1177,6 +1177,141 @@ class ConverterE2ETest {
                 "mypyc(GCP) must be at least competitive with mypyc(bare) — f-string must not regress");
     }
 
+    // ── P5: method call return-type inference ─────────────────────────────────
+
+    /**
+     * P5-A: Python built-in type method return-type inference.
+     *
+     * <p>Without P5-A, {@code str.count()}, {@code str.find()}, {@code list.index()} etc.
+     * cause GCP's {@code MemberAccessorInference} to report {@code FIELD_NOT_FOUND} on
+     * primitive types, making all variables downstream become {@code UNKNOWN}.
+     * With P5-A, {@link CallConverter#tryMethodCall} intercepts these calls and returns
+     * a typed literal <em>before</em> GCP inference, so the method result flows as a
+     * proper {@code int}/{@code bool}/{@code str} into the rest of the function.
+     *
+     * <p>Representative pattern — {@code str.count()} and {@code str.find()} feeding
+     * integer accumulation:
+     * <pre>
+     *   s = str(i)          # str  (P4-B)
+     *   c = s.count("1")    # int  (P5-A) — was UNKNOWN before
+     *   total += c          # int + int → int accumulation fully typed
+     * </pre>
+     *
+     * <p>Expected speedup ≥ 2.5× because the integer accumulation loop is now
+     * fully typed and mypyc generates tight native arithmetic.
+     */
+    @Test
+    void method_call_return_type_gives_speedup() throws Exception {
+        String bare = """
+                def count_ones(n):
+                    total = 0
+                    for i in range(n):
+                        s = str(i)
+                        c = s.count("1")
+                        total += c
+                    return total
+
+                def find_sum(n):
+                    total = 0
+                    for i in range(n):
+                        s = str(i)
+                        pos = s.find("5")
+                        if pos >= 0:
+                            total += pos + 1
+                    return total
+
+                def upper_len_sum(n):
+                    total = 0
+                    for i in range(n):
+                        s = str(i).upper()
+                        c = s.count("0") + s.count("1")
+                        total += c
+                    return total
+                """;
+
+        String calls = """
+                count_ones(10000)
+                find_sum(10000)
+                upper_len_sum(10000)
+                """;
+
+        List<BenchCase> cases = List.of(
+                new BenchCase("count_ones",    List.of(10_000), 50_000),
+                new BenchCase("find_sum",      List.of(10_000), 50_000),
+                new BenchCase("upper_len_sum", List.of(10_000), 30_000)
+        );
+
+        Pipeline p = runPipeline("method_call", bare, calls, cases);
+
+        section("Method call: annotated source");
+        System.out.println(p.annotated());
+        assertTrue(p.annotated().contains("n: int"),
+                "GCP must infer 'n: int' from call context");
+        assertTrue(p.annotated().contains("-> int"),
+                "GCP must infer int return type — method results feed int accumulation");
+
+        p.printTable();
+        p.assertSpeedup("count_ones", 2.5,
+                "str.count()→int enables fully-typed int accumulation");
+        p.assertAvgGcpBeatsBare(
+                "mypyc(GCP) must outperform mypyc(bare) — method return types unlock int optimization");
+    }
+
+    /**
+     * P5-A: {@code list.index()} → int breaks FIELD_NOT_FOUND chain and enables typed inner loops.
+     *
+     * <p>Pattern: call {@code list.index()} once → {@code int} result (P5-A) → used as loop bound
+     * → inner loop is fully typed → mypyc emits native int arithmetic. Without P5-A, the
+     * result is {@code UNKNOWN}, which propagates through {@code range(UNKNOWN)} to make
+     * the loop variable untyped and disable native code generation for all inner arithmetic.
+     *
+     * <p>The benchmark verifies that the integer-heavy inner loop benefits significantly from
+     * type inference even though the one-time {@code list.index()} scan is not itself optimised.
+     */
+    @Test
+    void list_method_gives_speedup() throws Exception {
+        String bare = """
+                def index_guided_sum(n):
+                    data = list(range(n))
+                    mid = data.index(n // 2)
+                    total = 0
+                    for i in range(mid):
+                        total += i * (mid - i)
+                    return total
+
+                def index_double_loop(n):
+                    data = list(range(n))
+                    pivot = data.index(n * 3 // 4)
+                    total = 0
+                    for i in range(pivot):
+                        total += i * i + pivot
+                    return total
+                """;
+
+        String calls = """
+                index_guided_sum(1000)
+                index_double_loop(1000)
+                """;
+
+        List<BenchCase> cases = List.of(
+                new BenchCase("index_guided_sum",  List.of(1_000), 2_000),
+                new BenchCase("index_double_loop", List.of(1_000), 2_000)
+        );
+
+        Pipeline p = runPipeline("list_method", bare, calls, cases);
+
+        section("List method: annotated source");
+        System.out.println(p.annotated());
+        assertTrue(p.annotated().contains("n: int"),
+                "GCP must infer 'n: int' from call context");
+
+        p.printTable();
+        p.assertSpeedup("index_guided_sum", 2.0,
+                "list.index()→int enables typed inner loop i*(mid-i)");
+        p.assertAvgGcpBeatsBare(
+                "mypyc(GCP) must outperform mypyc(bare) — list method types unlock int optimization");
+    }
+
     // ── pipeline infrastructure ───────────────────────────────────────────────
 
     record BenchCase(String func, List<Object> args, int iters) {}

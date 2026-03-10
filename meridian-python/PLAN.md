@@ -109,6 +109,26 @@ Python source (有注解) / .pyi stub
 
 ---
 
+## P5 — 内置类型方法返回类型推断
+
+### P5-A：方法调用拦截（`CallConverter.tryMethodCall`）
+
+GCP 的 `MemberAccessorInference` 对 Python 原始类型（`str`/`int`/`float`）的成员访问会报 `FIELD_NOT_FOUND`，
+P5-A 在 `CallConverter` 中提前拦截，将方法调用替换为有类型的 GCP 节点，完全绕过 GCP 的方法查找。
+
+| 方法 | 返回类型 | 状态 |
+|------|---------|------|
+| `count()` / `index()` / `find()` / `rfind()` / `rindex()` / `bit_length()` | `int` | ✅ 已完成 |
+| `startswith()` / `endswith()` / `is*()` / `issubset()` 等 | `bool` | ✅ 已完成 |
+| `upper()` / `lower()` / `strip()` / `replace()` / `join()` / `format()` 等 | `str` | ✅ 已完成 |
+| `split()` / `rsplit()` / `splitlines()` 等 | `list[str]` | ✅ 已完成 |
+| `pop()` | 接收者元素类型（`ArrayAccessor(recv, 0)`） | ✅ 已完成 |
+| `append()` / `extend()` / `sort()` / `clear()` 等变更方法 | `None` | ✅ 已完成 |
+
+**关键价值**：`str.count()/find()` 等方法返回 `int`，使后续整型累积链 `total += c` 能够推断出 `total: int` 和函数返回类型 `-> int`，进而让 mypyc 生成全局优化的原生代码。
+
+---
+
 ## 忽略的特性（过于动态，暂不考虑）
 
 | 特性 | 原因 |

@@ -10,7 +10,7 @@ All correctness checks pass (GCP output == bare output == CPython output).
 
 ---
 
-## P0 + P1 + P2 + P3 + P4 Converters (16 tests, parallel, ~25 min)
+## P0 + P1 + P2 + P3 + P4 + P5 Converters (18 tests, parallel, ~30 min)
 
 | Converter          | bare× | GCP×   | GCP/bare | Key pattern                                          |
 |--------------------|-------|--------|----------|------------------------------------------------------|
@@ -18,6 +18,8 @@ All correctness checks pass (GCP output == bare output == CPython output).
 | aug_assign         | 0.89× |  7.28× |   8.15×  | `x += i` → `x = x + i`, int accumulation            |
 | builtin_sorted     | 1.07× | 11.90× |  11.12×  | `max(int,int)→int`, `sorted(range(n))→list[int]`    |
 | builtins           | 0.92× |  3.90× |   4.24×  | `len(lst)→int`, `abs(int)→int`, loop bounds typed    |
+| list_method        | 1.16× |  2.44× |   2.11×  | `list.index()→int` enables typed inner loop          |
+| method_call        | 1.18× |  3.93× |   3.32×  | `str.count/find()→int` unlocks int accumulation chain|
 | default_params     | 1.52× | 20.63× |  13.57×  | `def f(x=0)` → `x: int` from default literal        |
 | enumerate_zip      | 0.81× | 28.03× |  34.75×  | `enumerate(range(n))` → idx:int, val:int             |
 | for_loop_var       | 0.81× | 16.79× |  20.81×  | `for x in lst` → `x: T` via ArrayAccessor            |
@@ -30,7 +32,7 @@ All correctness checks pass (GCP output == bare output == CPython output).
 | starred            | 1.01× |  9.11× |   9.05×  | `first, *rest = lst` → `rest: list[int]`             |
 | subscript          | 1.24× |  1.86× |   1.50×  | `lst[i]` → ArrayAccessor (str ops limit gain)        |
 | tuple_unpack       | 0.88× | 18.77× |  21.41×  | `a, b = f()` → TupleUnpackNode, typed returns        |
-| **AVERAGE**        | **1.01×** | **17.60×** | **17.41×** |                                               |
+| **AVERAGE**        | **1.04×** | **15.52×** | **14.98×** |                                               |
 
 ### Highlights
 - **`named_expr`** (walrus `:=`) reaches **43.54×** — walrus in while conditions gives a fully-typed
@@ -42,6 +44,7 @@ All correctness checks pass (GCP output == bare output == CPython output).
 - **`builtin_sorted`** `max(int, int)→int` enables **32.05×** on `max_of_range` loop.
 - **`fstring`** P4-A safety-net: f-strings don't break GCP pipeline; `len(label)→int` inferred
   correctly, enabling **20.79×** on the same function.
+- **`method_call`** (P5-A): `str.count()/find()→int` allows the type chain `c: int → total: int → → int` to complete, giving **4.78×** on `count_ones`.
 - **`bare×` ≈ 1.0×** across the board — untyped mypyc rarely beats CPython; GCP annotations
   are the decisive factor.
 
@@ -131,6 +134,25 @@ All correctness checks pass (GCP output == bare output == CPython output).
 |-------------------------|-----------|---------|--------|------|
 | format_sum(1000)        |  45 811   |  67 274 |  2 203 | 20.79× |
 | count_labels(1000)      |  59 559   |  60 635 |  3 593 | 16.58× |
+
+---
+
+---
+
+## P5 converters
+
+### str method return type inference
+| Function                | CPython ns | bare ns  | GCP ns  | GCP× |
+|-------------------------|-----------|---------|--------|------|
+| count_ones(10000)       | 2 425 316 | 1 766 169|  507 231|  4.78× |
+| find_sum(10000)         | 2 117 563 | 1 838 840|  512 014|  4.14× |
+| upper_len_sum(10000)    | 2 897 497 | 2 809 724| 1 006 051|  2.88× |
+
+### list method return type inference
+| Function                | CPython ns | bare ns  | GCP ns  | GCP× |
+|-------------------------|-----------|---------|--------|------|
+| index_guided_sum(1000)  |  83 829   |  51 517 | 22 108 |  3.79× |
+| index_double_loop(1000) |  70 466   | 104 322 | 65 198 |  1.08× |
 
 ---
 
