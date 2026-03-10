@@ -129,6 +129,67 @@ P5-A 在 `CallConverter` 中提前拦截，将方法调用替换为有类型的 
 
 ---
 
+## P6 — 跨文件/跨模块类型推断 🔴 最高优先级
+
+**问题**：`ImportConverter` 和 `ImportFromConverter` 目前是 NoOp，`from utils import helper` 后调用 `helper(x)` 全部返回 `UNKNOWN`。真实项目 90% 的代码都是多文件的。
+
+| 任务 | 说明 | 状态 |
+|------|------|------|
+| `ImportFromConverter` 读取被导入模块 AST | 提取导出函数的类型签名，注入当前作用域 | ⬜ 待实现 |
+| `PythonInferencer` 多文件联合分析 | `inferWithContext()` 扩展为接收多文件 Map | ⬜ 待实现 |
+| E2E 测试 | `from math_utils import dot_product` → 调用方正确推断参数/返回类型 | ⬜ 待实现 |
+
+---
+
+## P7 — 用户自定义类方法推断 🟡 第二优先级
+
+**问题**：P5-A 只处理内置类型方法（硬编码方法名→返回类型）。用户自定义类 `class Foo:` 的方法调用 `foo.bar()` 仍然返回 `UNKNOWN`。
+
+| 任务 | 说明 | 状态 |
+|------|------|------|
+| `ClassDefConverter` 补充方法注册 | 将 class body 的方法注册到 GCP `Entity` | ⬜ 待实现 |
+| `CallConverter.tryMethodCall` 扩展 | 当方法名未在硬编码表中时，从 GCP 符号表查找接收者类型 | ⬜ 待实现 |
+| E2E 测试 | 定义简单数据类，调用其方法，验证返回类型推断 | ⬜ 待实现 |
+
+---
+
+## P8 — 真实项目基准测试 🟡 第三优先级
+
+**问题**：目前所有 E2E 测试都是人工设计的"最优"场景（纯整数循环）。真实项目的代码混合了字符串处理、IO、自定义类、多文件依赖，实际加速可能只有 2-5×。
+
+| 任务 | 说明 | 状态 |
+|------|------|------|
+| 选取开源 Python 纯计算库 | 如 sympy 核心算法、networkx 路径算法或自定义矩阵库 | ⬜ 待实现 |
+| 运行管道统计覆盖率 | 有多少函数推断出参数类型/返回类型 | ⬜ 待实现 |
+| 测量整体项目加速比 | 对比 3× 目标 | ⬜ 待实现 |
+| 识别瓶颈，指导 P6/P7 | | ⬜ 待实现 |
+
+---
+
+## P9 — dict 类型感知 🟢 低优先级
+
+**问题**：`dict.get(key)` 返回 `value | None`，`dict[key]` subscript 返回 value 类型，目前都返回 `UNKNOWN`。
+
+| 任务 | 说明 | 状态 |
+|------|------|------|
+| `DictConverter` 提取 key/value 类型 | 目前只建 `DictNode`，缺少泛型参数 | ⬜ 待实现 |
+| P5-A 扩展 `dict.get(key)` | 返回 value 类型（通过 `DictAccessor`） | ⬜ 待实现 |
+| `dict.keys()/values()/items()` 返回类型 | 对应类型的迭代器 | ⬜ 待实现 |
+
+---
+
+## P10 — `PythonAnnotationWriter` 支持 `list[T]` 参数注解 🟢 低优先级
+
+**问题**：参数注解只写简单类型（`n: int`），无法写 `data: list[int]`。导致 mypyc 看不到集合参数的元素类型，无法优化 `data[i]` 操作。
+
+| 任务 | 说明 | 状态 |
+|------|------|------|
+| `TypeAnnotationGenerator` 支持 `Array<T>` → `list[T]` | 泛型集合类型序列化 | ⬜ 待实现 |
+| 参数注解写入时支持泛型集合 | | ⬜ 待实现 |
+| 验证 `subscript` 测试提升 | 从当前 1.86× 提升 | ⬜ 待实现 |
+
+---
+
 ## 忽略的特性（过于动态，暂不考虑）
 
 | 特性 | 原因 |
