@@ -62,6 +62,32 @@ public class PythonInferencer {
         return ast;
     }
 
+    /**
+     * Demand-driven (call-site) inference: process the library source together with
+     * a usage-context source in the same {@link ASF}.
+     *
+     * <p>Both ASTs are built and inferred jointly. Afterwards, the caller should use
+     * {@link PythonAnnotationWriter#annotate(String, AST, AST)} to produce annotations
+     * that include parameter types extracted from the call sites in the usage AST.
+     *
+     * @param librarySource  the library Python source (zero annotations)
+     * @param usageSource    a Python snippet that calls the library with concrete arguments
+     * @return a two-element array: {@code [libraryAst, usageAst]}
+     */
+    public AST[] inferWithContext(String librarySource, String usageSource) {
+        // Library AST first — its functions must be visible when usage is processed
+        Map<String, Object> libPyAst = bridge.parse(librarySource);
+        AST libAst = converter.convert(libPyAst);
+
+        // Usage AST — call sites carry concrete argument types (literals → outlines)
+        Map<String, Object> usagePyAst = bridge.parse(usageSource);
+        AST usageAst = converter.convert(usagePyAst);
+
+        // Joint inference: GCP's ASF infers over all registered ASTs simultaneously
+        asf.infer();
+        return new AST[]{libAst, usageAst};
+    }
+
     // ── pipeline shortcuts ─────────────────────────────────────────────────────
 
     /**

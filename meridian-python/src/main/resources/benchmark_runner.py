@@ -1,16 +1,21 @@
 #!/usr/bin/env python3
 """
-benchmark_runner.py  —  Compare pure CPython vs mypyc-compiled execution speed.
+benchmark_runner.py  —  Three-way comparison:
+  CPython(bare)  vs  mypyc(bare, no annotations)  vs  mypyc(GCP-annotated)
 
 Usage:
-    python3 benchmark_runner.py <py_dir> <so_dir> <module_name>
+    python3 benchmark_runner.py <work_dir> <bare_module> <annotated_module>
 
-    py_dir      – directory containing <module_name>.py  (interpreted)
-    so_dir      – directory containing <module_name>.*.so  (mypyc-compiled)
-    module_name – e.g. "math_utils"
+    work_dir         – directory containing all .py and .so files
+    bare_module      – name of the original, zero-annotation .py
+                       (e.g. "math_utils_bare")
+    annotated_module – name of the GCP-annotated .py and its compiled .so
+                       (e.g. "math_utils_bare_annotated")
 
-Output: one JSON object printed to stdout, containing a "rows" array.
-Each row has: func, py_ns, mypyc_ns, speedup.
+Output: one JSON object to stdout with a "rows" array.
+Each row: func, cpython_ns, mypyc_bare_ns, mypyc_gcp_ns,
+          speedup_bare (mypyc_bare/cpython),
+          speedup_gcp  (mypyc_gcp/cpython).
 """
 
 import importlib.util
@@ -30,26 +35,29 @@ def _load_py(path: str, alias: str):
 
 
 def _load_so(so_path: str, module_name: str):
-    """
-    Load a mypyc-compiled extension by its absolute path.
-    The alias *must* be the bare module name (e.g. "math_utils") because
-    mypyc's internal init function is named  PyInit_<module_name>.
-    """
+    """Load a mypyc-compiled C extension. The alias must match PyInit_<name>."""
     spec = importlib.util.spec_from_file_location(module_name, so_path)
     mod = importlib.util.module_from_spec(spec)
-    sys.modules[module_name] = mod          # required for mypyc cross-module refs
+    sys.modules[module_name] = mod
     spec.loader.exec_module(mod)
     return mod
+
+
+def _find_so(directory: str, module_prefix: str) -> str | None:
+    candidates = [
+        f for f in os.listdir(directory)
+        if f.startswith(module_prefix) and (f.endswith(".so") or f.endswith(".pyd"))
+    ]
+    return os.path.join(directory, candidates[0]) if candidates else None
 
 
 # ── micro-benchmark ───────────────────────────────────────────────────────────
 
 def _bench(fn, args: tuple, iters: int) -> float:
-    """Return median ns/call over `iters` hot iterations (after a warm-up pass)."""
+    """Median ns/call over iters hot iterations (after warm-up)."""
     warmup = min(iters // 10, 2_000)
     for _ in range(warmup):
         fn(*args)
-    # Split into 5 equal runs, take the median to reduce noise
     chunk = iters // 5
     samples = []
     for _ in range(5):
@@ -58,7 +66,7 @@ def _bench(fn, args: tuple, iters: int) -> float:
             fn(*args)
         samples.append((time.perf_counter() - t0) / chunk * 1e9)
     samples.sort()
-    return samples[2]   # median
+    return samples[2]  # median
 
 
 # ── benchmark cases ───────────────────────────────────────────────────────────
@@ -79,49 +87,64 @@ CASES = [
 
 def main():
     if len(sys.argv) != 4:
-        print(json.dumps({"error": "usage: benchmark_runner.py <py_dir> <so_dir> <module>"}),
+        print(json.dumps({"error":
+              "usage: benchmark_runner.py <work_dir> <bare_module> <annotated_module>"}),
               file=sys.stderr)
         sys.exit(1)
 
-    py_dir, so_dir, mod_name = sys.argv[1], sys.argv[2], sys.argv[3]
+    work_dir, bare_mod, ann_mod = sys.argv[1], sys.argv[2], sys.argv[3]
 
-    # Locate files
-    py_path = os.path.join(py_dir, mod_name + ".py")
-    if not os.path.isfile(py_path):
-        print(json.dumps({"error": f"Python source not found: {py_path}"}), file=sys.stderr)
+    # ── locate files ─────────────────────────────────────────────────────────
+    bare_py = os.path.join(work_dir, bare_mod + ".py")
+    if not os.path.isfile(bare_py):
+        print(json.dumps({"error": f"bare .py not found: {bare_py}"}), file=sys.stderr)
         sys.exit(1)
 
-    so_candidates = [
-        f for f in os.listdir(so_dir)
-        if f.startswith(mod_name) and (f.endswith(".so") or f.endswith(".pyd"))
-    ]
-    if not so_candidates:
-        print(json.dumps({"error": f"No .so/.pyd found in {so_dir} for '{mod_name}'"}),
+    ann_py = os.path.join(work_dir, ann_mod + ".py")
+    if not os.path.isfile(ann_py):
+        print(json.dumps({"error": f"annotated .py not found: {ann_py}"}), file=sys.stderr)
+        sys.exit(1)
+
+    bare_so = _find_so(work_dir, bare_mod)
+    ann_so  = _find_so(work_dir, ann_mod)
+
+    if bare_so is None:
+        print(json.dumps({"error": f"no .so found for bare module '{bare_mod}' in {work_dir}"}),
               file=sys.stderr)
         sys.exit(1)
-    so_path = os.path.join(so_dir, so_candidates[0])
+    if ann_so is None:
+        print(json.dumps({"error": f"no .so found for annotated module '{ann_mod}' in {work_dir}"}),
+              file=sys.stderr)
+        sys.exit(1)
 
-    # Load both versions
-    py_mod = _load_py(py_path, mod_name + "__py")
-    so_mod = _load_so(so_path, mod_name)
+    # ── load all three versions ───────────────────────────────────────────────
+    # 1. CPython interprets the original bare .py
+    py_mod        = _load_py(bare_py,  bare_mod + "__cpython")
+    # 2. mypyc compiled the bare .py directly (no annotations)
+    bare_so_mod   = _load_so(bare_so,  bare_mod)
+    # 3. mypyc compiled the GCP-annotated .py
+    ann_so_mod    = _load_so(ann_so,   ann_mod)
 
-    # Run benchmarks
+    # ── run benchmarks ────────────────────────────────────────────────────────
     rows = []
     for fn_name, args, iters in CASES:
-        py_fn = getattr(py_mod, fn_name, None)
-        so_fn = getattr(so_mod, fn_name, None)
-        if py_fn is None or so_fn is None:
+        py_fn   = getattr(py_mod,      fn_name, None)
+        bare_fn = getattr(bare_so_mod, fn_name, None)
+        ann_fn  = getattr(ann_so_mod,  fn_name, None)
+        if py_fn is None or bare_fn is None or ann_fn is None:
             continue
 
-        py_ns   = _bench(py_fn, args, iters)
-        mypyc_ns = _bench(so_fn, args, iters)
-        speedup = py_ns / mypyc_ns if mypyc_ns > 0 else 0.0
+        cpython_ns   = _bench(py_fn,   args, iters)
+        bare_ns      = _bench(bare_fn, args, iters)
+        gcp_ns       = _bench(ann_fn,  args, iters)
 
         rows.append({
-            "func":     f"{fn_name}({', '.join(str(a) for a in args)})",
-            "py_ns":    round(py_ns, 1),
-            "mypyc_ns": round(mypyc_ns, 1),
-            "speedup":  round(speedup, 2),
+            "func":          f"{fn_name}({', '.join(str(a) for a in args)})",
+            "cpython_ns":    round(cpython_ns, 1),
+            "mypyc_bare_ns": round(bare_ns,    1),
+            "mypyc_gcp_ns":  round(gcp_ns,     1),
+            "speedup_bare":  round(cpython_ns / bare_ns if bare_ns > 0 else 0.0, 2),
+            "speedup_gcp":   round(cpython_ns / gcp_ns  if gcp_ns  > 0 else 0.0, 2),
         })
 
     print(json.dumps({"rows": rows}))

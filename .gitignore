@@ -1,5 +1,32 @@
+# Build output
 target/
+
+# Compiled bytecode / native extensions
 *.class
+*.so
+*.pyd
+*.pyc
+*.pyo
+__pycache__/
+
+# IDE / editor
 *.iml
 .idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
 .DS_Store
+Thumbs.db
+
+# Python virtual environments / packaging
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+
+# mypyc / mypy cache
+.mypy_cache/
+

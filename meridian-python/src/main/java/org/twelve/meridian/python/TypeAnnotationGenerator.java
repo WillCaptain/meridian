@@ -12,13 +12,19 @@ import org.twelve.gcp.node.imexport.Import;
 import org.twelve.gcp.node.statement.OutlineDeclarator;
 import org.twelve.gcp.node.statement.Statement;
 import org.twelve.gcp.node.statement.VariableDeclarator;
+import org.twelve.gcp.ast.Node;
+import org.twelve.gcp.node.statement.ReturnStatement;
 import org.twelve.gcp.outline.Outline;
 import org.twelve.gcp.outline.adt.Array;
 import org.twelve.gcp.outline.adt.Option;
 import org.twelve.gcp.outline.builtin.UNIT;
 import org.twelve.gcp.outline.builtin.UNKNOWN;
 import org.twelve.gcp.outline.primitive.*;
+import org.twelve.gcp.outline.projectable.Function;
+import org.twelve.gcp.outline.projectable.Genericable;
+import org.twelve.gcp.outline.projectable.Projectable;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -87,26 +93,20 @@ public class TypeAnnotationGenerator {
     private void appendFunctionDef(String name, FunctionNode fn, StringBuilder sb, String indent) {
         sb.append(indent).append("def ").append(name).append("(");
 
-        Argument arg = fn.argument();
-        if (arg != null) {
-            List<Argument> args = flattenArgs(arg);
-            for (int i = 0; i < args.size(); i++) {
-                if (i > 0) sb.append(", ");
-                Argument a = args.get(i);
-                String argName = a.lexeme().trim();
-                String argType = resolveType(a.declared(), a.outline());
-                sb.append(argName);
-                if (argType != null) sb.append(": ").append(argType);
-            }
+        List<Argument> args = flattenFunctionArgs(fn);
+        for (int i = 0; i < args.size(); i++) {
+            if (i > 0) sb.append(", ");
+            Argument a = args.get(i);
+            String argName = a.name();   // use .name(), not .lexeme() which includes type annotation
+            String argType = resolveType(a.declared(), a.outline());
+            sb.append(argName);
+            if (argType != null) sb.append(": ").append(argType);
         }
         sb.append(")");
 
-        // Return type
-        Outline returns = fn.outline();
-        if (returns != null) {
-            String retType = outlineToTypeStr(returns);
-            if (retType != null) sb.append(" -> ").append(retType);
-        }
+        // Return type: navigate to the innermost FunctionNode, then read returns().supposedToBe()
+        String retType = functionReturnType(fn);
+        if (retType != null) sb.append(" -> ").append(retType);
 
         sb.append(": ...\n");
     }
@@ -177,6 +177,12 @@ public class TypeAnnotationGenerator {
     String outlineToTypeStr(Outline outline) {
         if (outline == null) return null;
         if (outline instanceof UNKNOWN || outline instanceof NOTHING) return null;
+        // GCP-internal structural/protocol types: no valid Python representation
+        if (outline instanceof Function<?, ?>) return null;
+        if (outline instanceof Genericable<?, ?> g && g.containsGeneric()) return null;
+        // Projectable outlines (Addable, OperateAble, etc.) are GCP runtime protocols,
+        // not Python types — mypyc infers the concrete type from operand types in the body
+        if (outline instanceof Projectable) return null;
         if (outline instanceof UNIT) return "None";
         if (outline instanceof BOOL)    return "bool";
         if (outline instanceof INTEGER) return "int";
@@ -220,13 +226,61 @@ public class TypeAnnotationGenerator {
         };
     }
 
+    // ── curried-function traversal helpers ────────────────────────────────────
+
     /**
-     * Flatten a GCP {@link Argument} (which may represent a multi-parameter tuple)
-     * into a flat list.
+     * Extract the Python return-type string from a (possibly curried) {@link FunctionNode}.
+     * <p>
+     * GCP represents a multi-parameter function as a chain of curried {@link FunctionNode}s
+     * ({@code FunctionNode.from(body, a, b, c)} builds {@code fn(a) { return fn(b) { return fn(c) { body } } }}).
+     * The actual return type lives in the <em>innermost</em> node's inferred outline.
      */
-    private List<Argument> flattenArgs(Argument arg) {
-        // In GCP, a single Argument may represent the entire parameter list
-        // as nested Argument nodes. For now, return it as a singleton.
-        return List.of(arg);
+    String functionReturnType(FunctionNode fn) {
+        FunctionNode innermost = getInnermostFn(fn);
+        Outline fnOutline = innermost.outline();
+        if (fnOutline instanceof Function<?, ?> f) {
+            return outlineToTypeStr(f.returns().supposedToBe());
+        }
+        return null;
+    }
+
+    /**
+     * Flatten the curried-function chain into a flat list of {@link Argument}s,
+     * skipping GCP's synthetic unit argument {@code ()}.
+     */
+    List<Argument> flattenFunctionArgs(FunctionNode fn) {
+        List<Argument> result = new ArrayList<>();
+        FunctionNode current = fn;
+        while (current != null) {
+            Argument arg = current.argument();
+            if (arg != null) {
+                String n = arg.name();
+                if (n != null && !n.trim().equals("()") && !n.trim().isEmpty()) {
+                    result.add(arg);
+                }
+            }
+            current = extractCurriedNext(current);
+        }
+        return result;
+    }
+
+    private FunctionNode getInnermostFn(FunctionNode fn) {
+        FunctionNode current = fn;
+        FunctionNode next;
+        while ((next = extractCurriedNext(current)) != null) {
+            current = next;
+        }
+        return current;
+    }
+
+    /** If {@code fn}'s body is a single {@code return <FunctionNode>}, return that nested node. */
+    private static FunctionNode extractCurriedNext(FunctionNode fn) {
+        for (Node child : fn.body().nodes()) {
+            if (child instanceof ReturnStatement rs
+                    && rs.expression() instanceof FunctionNode nested) {
+                return nested;
+            }
+        }
+        return null;
     }
 }

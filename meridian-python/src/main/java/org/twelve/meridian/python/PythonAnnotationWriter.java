@@ -1,10 +1,14 @@
 package org.twelve.meridian.python;
 
 import org.twelve.gcp.ast.AST;
+import org.twelve.gcp.ast.Node;
 import org.twelve.gcp.node.expression.Assignment;
+import org.twelve.gcp.node.expression.Expression;
 import org.twelve.gcp.node.expression.Variable;
+import org.twelve.gcp.node.expression.identifier.Identifier;
 import org.twelve.gcp.node.expression.typeable.TypeNode;
 import org.twelve.gcp.node.function.Argument;
+import org.twelve.gcp.node.function.FunctionCallNode;
 import org.twelve.gcp.node.function.FunctionNode;
 import org.twelve.gcp.node.statement.VariableDeclarator;
 import org.twelve.gcp.outline.Outline;
@@ -60,16 +64,44 @@ public class PythonAnnotationWriter {
      * Produce an annotated copy of {@code originalSource} using types from {@code ast}.
      */
     public String annotate(String originalSource, AST ast) {
-        // Collect inferred types keyed by variable / function name
-        Map<String, String> nameToType = collectInferredTypes(ast);
-        if (nameToType.isEmpty()) return originalSource;
+        return annotate(originalSource, ast, Collections.emptyMap());
+    }
 
+    /**
+     * Demand-driven annotation: augment type inference with call-site information
+     * collected from a usage AST.
+     *
+     * <p>The {@code usageAst} is scanned for {@link FunctionCallNode} instances.
+     * For each call whose name matches a function in {@code libraryAst}, the concrete
+     * argument types (which GCP infers from call-site literals) are mapped back to
+     * the function's parameter names and injected as annotations.
+     *
+     * @param originalSource the library Python source to annotate
+     * @param libraryAst     the inferred GCP AST for the library
+     * @param usageAst       a second AST containing call sites with concrete argument types
+     */
+    public String annotate(String originalSource, AST libraryAst, AST usageAst) {
+        Map<String, String> nameToType = collectInferredTypes(libraryAst);
+        augmentFromCallSites(nameToType, libraryAst, usageAst);
+        return rewrite(originalSource, nameToType);
+    }
+
+    /**
+     * Core annotation: apply a pre-built type map (possibly augmented by call-site analysis).
+     */
+    public String annotate(String originalSource, AST ast, Map<String, String> extraHints) {
+        Map<String, String> nameToType = collectInferredTypes(ast);
+        nameToType.putAll(extraHints);
+        return rewrite(originalSource, nameToType);
+    }
+
+    private String rewrite(String originalSource, Map<String, String> nameToType) {
+        if (nameToType.isEmpty()) return originalSource;
         String[] lines = originalSource.split("\n", -1);
         StringBuilder out = new StringBuilder();
         for (String line : lines) {
             out.append(rewriteLine(line, nameToType)).append("\n");
         }
-        // Remove the trailing newline we added for the last line if source didn't end with one
         if (!originalSource.endsWith("\n") && out.length() > 0) {
             out.setLength(out.length() - 1);
         }
@@ -107,19 +139,20 @@ public class PythonAnnotationWriter {
 
     private void collectFunctionTypes(String funcName, FunctionNode fn,
                                       Map<String, String> result) {
-        // Collect argument types
-        Argument arg = fn.argument();
-        if (arg != null) {
-            String argName = arg.lexeme().trim().replaceAll(":.*", "").trim();
+        for (Argument arg : typeGen.flattenFunctionArgs(fn)) {
             TypeNode declared = arg.declared();
-            if (declared == null) {
+            if (declared != null) {
+                // Use declared type (from user annotation OR inferred from default value)
+                String s = typeGen.typeNodeToStr(declared);
+                if (s != null) result.put(funcName + "#" + arg.name(), s);
+            } else {
+                // No declared type: use GCP inferred outline type
                 String typeStr = typeGen.outlineToTypeStr(arg.outline());
-                if (typeStr != null) result.put(funcName + "#" + argName, typeStr);
+                if (typeStr != null) result.put(funcName + "#" + arg.name(), typeStr);
             }
         }
-        // Inferred return type
-        Outline ret = fn.outline();
-        String retStr = typeGen.outlineToTypeStr(ret);
+        // Return type
+        String retStr = typeGen.functionReturnType(fn);
         if (retStr != null) result.put(funcName + "#return", retStr);
     }
 
@@ -171,9 +204,72 @@ public class PythonAnnotationWriter {
         return line;
     }
 
+    // ── demand-driven call-site analysis ─────────────────────────────────────
+
+    /**
+     * Scan {@code usageAst} for function calls and, for each call that matches a
+     * function defined in {@code libraryAst}, record the concrete argument types
+     * under the key {@code "funcName#paramName"} in {@code out}.
+     *
+     * <p>This is a name-based (not symbol-based) analysis: it matches calls by the
+     * callee identifier name rather than by resolving cross-module imports.
+     * This keeps the implementation simple while correctly handling the common case
+     * where the usage context calls library functions with typed literals.
+     */
+    private void augmentFromCallSites(Map<String, String> out, AST libraryAst, AST usageAst) {
+        // Build func → [paramName, ...] from the library AST
+        Map<String, List<String>> funcParams = new LinkedHashMap<>();
+        for (var stmt : libraryAst.program().body().statements()) {
+            if (stmt instanceof VariableDeclarator vd) {
+                for (Assignment a : vd.assignments()) {
+                    if (a.rhs() instanceof FunctionNode fn) {
+                        String fname = a.lhs().lexeme().trim().replaceAll(":.*", "").trim();
+                        List<String> pnames = typeGen.flattenFunctionArgs(fn).stream()
+                                .map(Argument::name).toList();
+                        funcParams.put(fname, pnames);
+                    }
+                }
+            }
+        }
+        if (funcParams.isEmpty()) return;
+
+        // Traverse usage AST and collect call-site argument types
+        scanCallSites(usageAst.program(), funcParams, out);
+    }
+
+    private void scanCallSites(Node node, Map<String, List<String>> funcParams,
+                                Map<String, String> out) {
+        if (node instanceof FunctionCallNode call) {
+            if (call.function() instanceof Identifier id) {
+                String fname = id.name();
+                List<String> params = funcParams.get(fname);
+                if (params != null) {
+                    List<Expression> args = call.arguments();
+                    for (int i = 0; i < Math.min(params.size(), args.size()); i++) {
+                        Outline argOutline = args.get(i).outline();
+                        String typeStr = typeGen.outlineToTypeStr(argOutline);
+                        if (typeStr != null) {
+                            // putIfAbsent: first call site wins; never overwrite declared types
+                            out.putIfAbsent(fname + "#" + params.get(i), typeStr);
+                        }
+                    }
+                }
+            }
+        }
+        for (Node child : node.nodes()) {
+            scanCallSites(child, funcParams, out);
+        }
+    }
+
     /**
      * Inject parameter type annotations that are missing from the original arg list.
-     * E.g. "x, y: int" → "x: int, y: int" if x's type was inferred.
+     *
+     * <p>Handles three cases:
+     * <ul>
+     *   <li>{@code n}       → {@code n: int}  (bare param with inferred type)</li>
+     *   <li>{@code n=1000}  → {@code n: int = 1000}  (default value, add type before {@code =})</li>
+     *   <li>{@code n: int}  → unchanged  (already annotated)</li>
+     * </ul>
      */
     private String rewriteArgs(String funcName, String args, Map<String, String> nameToType) {
         if (args.isBlank()) return args;
@@ -183,17 +279,32 @@ public class PythonAnnotationWriter {
             if (i > 0) sb.append(", ");
             String param = params[i].trim();
             if (param.isEmpty()) { sb.append(param); continue; }
-            // Skip self / cls
             if (param.equals("self") || param.equals("cls")) { sb.append(param); continue; }
-            // Already annotated?
-            if (param.contains(":") || param.contains("=")) { sb.append(param); continue; }
-            String typeStr = nameToType.get(funcName + "#" + param);
+
+            // Already has a type annotation (colon appears before any equals sign)
+            if (hasTypeAnnotation(param)) { sb.append(param); continue; }
+
+            // Split off default value if present: "n=1000" → name="n", default="= 1000"
+            int eqIdx = param.indexOf('=');
+            String paramName   = eqIdx >= 0 ? param.substring(0, eqIdx).trim() : param;
+            String defaultPart = eqIdx >= 0 ? " " + param.substring(eqIdx).trim() : null;
+
+            String typeStr = nameToType.get(funcName + "#" + paramName);
             if (typeStr != null) {
-                sb.append(param).append(": ").append(typeStr);
+                sb.append(paramName).append(": ").append(typeStr);
+                if (defaultPart != null) sb.append(defaultPart);
             } else {
                 sb.append(param);
             }
         }
         return sb.toString();
+    }
+
+    /** Returns {@code true} when a parameter string already carries a type annotation. */
+    private static boolean hasTypeAnnotation(String param) {
+        int colonIdx  = param.indexOf(':');
+        int equalsIdx = param.indexOf('=');
+        // Annotation present if ':' exists and comes before '=' (or '=' is absent)
+        return colonIdx >= 0 && (equalsIdx < 0 || colonIdx < equalsIdx);
     }
 }

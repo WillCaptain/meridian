@@ -41,11 +41,12 @@ class MypycBenchmarkTest {
 
     record BenchRow(String func, double pyNs, double mypycNs, double speedup) {
         static BenchRow from(JsonNode node) {
+            // benchmark_runner.py now emits cpython_ns / mypyc_gcp_ns / speedup_gcp
             return new BenchRow(
                     node.get("func").asText(),
-                    node.get("py_ns").asDouble(),
-                    node.get("mypyc_ns").asDouble(),
-                    node.get("speedup").asDouble()
+                    node.get("cpython_ns").asDouble(),
+                    node.get("mypyc_gcp_ns").asDouble(),
+                    node.get("speedup_gcp").asDouble()
             );
         }
     }
@@ -83,16 +84,15 @@ class MypycBenchmarkTest {
         }
 
         // ── 3. Run Python micro-benchmark ─────────────────────────────────────
-        //   args: <py_dir>  <so_dir>  <module_name>
-        //   py_dir = directory containing the original .py
-        //   so_dir = directory containing the compiled .so
+        //   args: <work_dir>  <bare_module>  <annotated_module>
+        //   Both .py and .so are in workDir; same module name for CPython and mypyc paths.
         String python = detectPython();
         ProcessBuilder pb = new ProcessBuilder(
                 python,
                 runnerScript.toAbsolutePath().toString(),
-                srcFile.getParent(),          // py_dir  (original, uncopied .py)
-                workDir.toAbsolutePath().toString(),  // so_dir
-                "math_utils"
+                workDir.toAbsolutePath().toString(),  // work_dir (contains .py and .so)
+                "math_utils",                         // bare_module (CPython reads .py)
+                "math_utils"                          // annotated_module (same .so)
         );
         pb.redirectErrorStream(false);
         Process proc = pb.start();
@@ -157,7 +157,7 @@ class MypycBenchmarkTest {
         String top   = "╔" + "═".repeat(W_FUNC + 2) + "╦" + "═".repeat(12) + "╦" + "═".repeat(12) + "╦" + "═".repeat(11) + "╗";
         String bot   = "╚" + "═".repeat(W_FUNC + 2) + "╩" + "═".repeat(12) + "╩" + "═".repeat(12) + "╩" + "═".repeat(11) + "╝";
         String hdr   = String.format("║ %-" + W_FUNC + "s ║ %10s ║ %10s ║ %9s ║",
-                "Function", "CPython ns", "mypyc ns", "Speedup");
+                "Function", "CPython ns", "mypyc(GCP) ns", "Speedup");
 
         String titlePad = " ".repeat((W_FUNC + 2 + 12 + 12 + 11 + 3 * 3 - 44) / 2);
         String title = "║" + titlePad + "  Meridian Python Performance Benchmark  " + titlePad + " ║";
