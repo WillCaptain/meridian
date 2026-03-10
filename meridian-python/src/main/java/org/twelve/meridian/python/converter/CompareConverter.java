@@ -19,7 +19,8 @@ public class CompareConverter extends PyConverter {
 
     @Override
     public Node convert(AST ast, Map<String, Object> pyNode, Node parent) {
-        Expression left = (Expression) dispatch(ast, mapOf(pyNode, "left"));
+        // Pass parent so NamedExpr (:=) inside conditions can declare variables in the right scope
+        Expression left = (Expression) dispatch(ast, mapOf(pyNode, "left"), parent);
         List<Map<String, Object>> ops = listOf(pyNode, "ops");
         List<Map<String, Object>> comparators = listOf(pyNode, "comparators");
         if (left == null || ops.isEmpty()) return null;
@@ -27,7 +28,7 @@ public class CompareConverter extends PyConverter {
         Expression result = left;
         for (int i = 0; i < ops.size(); i++) {
             BinaryOperator op = pyCmpOpToGcp(typeOf(ops.get(i)));
-            Expression right = (Expression) dispatch(ast, comparators.get(i));
+            Expression right = (Expression) dispatch(ast, comparators.get(i), parent);
             if (op != null && right != null) {
                 result = new BinaryExpression(result, right, new OperatorNode<>(ast, op));
             }

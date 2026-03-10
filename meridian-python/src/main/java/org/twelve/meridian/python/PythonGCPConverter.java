@@ -71,6 +71,9 @@ public class PythonGCPConverter {
         converters.put("While",         new WhileConverter(converters));
         converters.put("With",          new WithConverter(converters));
         converters.put("Try",           new TryConverter(converters));
+        converters.put("TryStar",       new TryConverter(converters));
+        converters.put("Assert",        new AssertConverter(converters));   // P3: isinstance narrowing
+        converters.put("Match",         new MatchConverter(converters));    // P3: Python 3.10+ match/case
 
         // ── no-op statements ─────────────────────────────────────────────────
         NoOpConverter noop = new NoOpConverter(converters);
@@ -80,6 +83,16 @@ public class PythonGCPConverter {
         converters.put("Nonlocal",      noop);
         converters.put("Break",         noop);
         converters.put("Continue",      noop);
+
+        // P4-A: safety-net — async / generator / exception-raise / slice
+        converters.put("Raise",         noop);
+        converters.put("AsyncFor",      noop);
+        converters.put("AsyncWith",     noop);
+        converters.put("Await",         noop);
+        converters.put("Yield",         noop);
+        converters.put("YieldFrom",     noop);
+        converters.put("FormattedValue",noop);
+        converters.put("Slice",         noop);
 
         // ── expressions ──────────────────────────────────────────────────────
         converters.put("Name",          new NameConverter(converters));
@@ -108,5 +121,11 @@ public class PythonGCPConverter {
 
         // ── lambda (P1) ───────────────────────────────────────────────────────
         converters.put("Lambda",        new LambdaConverter(converters));
+
+        // ── walrus operator (P2) ──────────────────────────────────────────────
+        converters.put("NamedExpr",     new NamedExprConverter(converters));
+
+        // P4-A: f-string — infers str type
+        converters.put("JoinedStr",     new JoinedStrConverter(converters));
     }
 }

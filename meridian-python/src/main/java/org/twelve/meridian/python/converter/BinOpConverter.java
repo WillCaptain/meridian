@@ -18,8 +18,9 @@ public class BinOpConverter extends PyConverter {
 
     @Override
     public Node convert(AST ast, Map<String, Object> pyNode, Node parent) {
-        Expression left = (Expression) dispatch(ast, mapOf(pyNode, "left"));
-        Expression right = (Expression) dispatch(ast, mapOf(pyNode, "right"));
+        // Pass parent so NamedExpr (:=) inside binary expressions can declare variables correctly
+        Expression left = (Expression) dispatch(ast, mapOf(pyNode, "left"), parent);
+        Expression right = (Expression) dispatch(ast, mapOf(pyNode, "right"), parent);
         BinaryOperator op = pyArithOpToGcp(typeOf(mapOf(pyNode, "op")));
         if (left == null || right == null || op == null) return null;
         return new BinaryExpression(left, right, new OperatorNode<>(ast, op));

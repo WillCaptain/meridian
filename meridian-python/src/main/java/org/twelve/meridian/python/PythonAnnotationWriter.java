@@ -289,9 +289,20 @@ public class PythonAnnotationWriter {
             String paramName   = eqIdx >= 0 ? param.substring(0, eqIdx).trim() : param;
             String defaultPart = eqIdx >= 0 ? " " + param.substring(eqIdx).trim() : null;
 
-            String typeStr = nameToType.get(funcName + "#" + paramName);
+            // Strip */** prefix for lookup (e.g. "*args" → "args"), restore in output
+            String argPrefix   = "";
+            String lookupName  = paramName;
+            if (paramName.startsWith("**")) {
+                argPrefix  = "**";
+                lookupName = paramName.substring(2);
+            } else if (paramName.startsWith("*")) {
+                argPrefix  = "*";
+                lookupName = paramName.substring(1);
+            }
+
+            String typeStr = nameToType.get(funcName + "#" + lookupName);
             if (typeStr != null) {
-                sb.append(paramName).append(": ").append(typeStr);
+                sb.append(argPrefix).append(lookupName).append(": ").append(typeStr);
                 if (defaultPart != null) sb.append(defaultPart);
             } else {
                 sb.append(param);

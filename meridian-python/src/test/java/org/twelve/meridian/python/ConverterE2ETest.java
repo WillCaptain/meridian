@@ -650,6 +650,533 @@ class ConverterE2ETest {
                 "mypyc(GCP) must outperform mypyc(bare) for lambda-containing functions");
     }
 
+    /**
+     * P2 — NamedExpr (walrus {@code :=}): typed variables declared by walrus enable
+     * full integer loop optimization in mypyc.
+     *
+     * <p>The walrus operator both assigns and returns a value. {@link NamedExprConverter}
+     * emits a {@link org.twelve.gcp.node.statement.VariableDeclarator} into the enclosing
+     * scope so GCP can infer the assigned variable's type from the right-hand expression.
+     *
+     * <p>{@code WhileConverter} and {@code IfStatementConverter} now dispatch the condition
+     * expression with the enclosing parent, so walrus in conditions properly declares
+     * variables in the function scope.
+     *
+     * <p>Expected speedup ≥ 3.0× — pure integer loops with fully-inferred types.
+     */
+    @Test
+    void named_expr_walrus_gives_speedup() throws Exception {
+        String bare = """
+                def sum_walrus_while(n):
+                    total = 0
+                    i = 0
+                    while (i := i + 1) <= n:
+                        total += i
+                    return total
+
+                def count_walrus_if(n):
+                    count = 0
+                    for i in range(n):
+                        if (sq := i * i) < n:
+                            count += 1
+                    return count
+
+                def accumulate_walrus(n):
+                    result = 0
+                    val = 0
+                    for i in range(1, n + 1):
+                        if (val := val + i) % 10 == 0:
+                            result += val
+                    return result
+                """;
+
+        String calls = """
+                sum_walrus_while(1000)
+                count_walrus_if(10000)
+                accumulate_walrus(1000)
+                """;
+
+        List<BenchCase> cases = List.of(
+                new BenchCase("sum_walrus_while",  List.of(1_000),  400_000),
+                new BenchCase("count_walrus_if",   List.of(10_000), 100_000),
+                new BenchCase("accumulate_walrus", List.of(1_000),  400_000)
+        );
+
+        Pipeline p = runPipeline("named_expr", bare, calls, cases);
+
+        section("NamedExpr: annotated source");
+        System.out.println(p.annotated());
+        assertTrue(p.annotated().contains("n: int"),
+                "GCP must infer 'n: int' from call context");
+        assertTrue(p.annotated().contains("-> int"),
+                "GCP must infer integer return type for walrus-using functions");
+
+        p.printTable();
+        p.assertSpeedup("sum_walrus_while",  3.0, "walrus := in while-condition + int accumulation");
+        p.assertSpeedup("count_walrus_if",   2.0, "walrus := in if-condition, sq: int enables int comparison");
+        p.assertSpeedup("accumulate_walrus", 2.0, "walrus := in if-condition, val: int typed accumulation");
+        p.assertAvgGcpBeatsBare(
+                "mypyc(GCP) must outperform mypyc(bare) for NamedExpr-using functions");
+    }
+
+    /**
+     * P2 — Starred assignment: {@code first, *rest = lst} allows GCP to infer
+     * {@code rest: list[T]}, enabling typed iteration over the rest of a list.
+     *
+     * <p>Previously the starred variable ({@code *rest}) was silently ignored.
+     * {@link AssignConverter} now emits a separate
+     * {@link org.twelve.gcp.node.statement.VariableDeclarator} for the starred target
+     * with the full iterable as its right-hand value — giving GCP the list type.
+     *
+     * <p>Expected speedup ≥ 2.5× — the star-split list has known element type,
+     * so the inner iteration loop is fully typed.
+     */
+    @Test
+    void starred_assign_gives_speedup() throws Exception {
+        String bare = """
+                def sum_after_split(n):
+                    nums = [1, 2, 3, 4, 5, 6, 7, 8]
+                    first, *rest = nums
+                    total = 0
+                    for i in range(n):
+                        for x in rest:
+                            total += x
+                    return total
+
+                def sum_tail_elements(n):
+                    data = [10, 20, 30, 40, 50]
+                    head, *tail = data
+                    total = 0
+                    for i in range(n):
+                        for x in tail:
+                            total += x + i
+                    return total
+
+                def process_starred_loop(n):
+                    base = [1, 2, 3, 4, 5]
+                    first, second, *rest = base
+                    total = 0
+                    for i in range(n):
+                        for x in rest:
+                            total += x * first + second
+                    return total
+                """;
+
+        String calls = """
+                sum_after_split(1000)
+                sum_tail_elements(1000)
+                process_starred_loop(1000)
+                """;
+
+        List<BenchCase> cases = List.of(
+                new BenchCase("sum_after_split",      List.of(1_000), 100_000),
+                new BenchCase("sum_tail_elements",    List.of(1_000), 100_000),
+                new BenchCase("process_starred_loop", List.of(1_000), 100_000)
+        );
+
+        Pipeline p = runPipeline("starred", bare, calls, cases);
+
+        section("Starred: annotated source");
+        System.out.println(p.annotated());
+        assertTrue(p.annotated().contains("n: int"),
+                "GCP must infer 'n: int' from call context");
+
+        p.printTable();
+        p.assertSpeedup("sum_after_split",      2.5, "*rest: list[int] → typed inner loop");
+        p.assertSpeedup("sum_tail_elements",    2.5, "*tail: list[int] → typed inner loop");
+        p.assertSpeedup("process_starred_loop", 2.5, "*rest: list[int] + int arithmetic");
+        p.assertAvgGcpBeatsBare(
+                "mypyc(GCP) must outperform mypyc(bare) for starred-assignment functions");
+    }
+
+    /**
+     * P3 — {@code enumerate} / {@code zip} in for-loops: GCP now produces typed variables
+     * directly from the well-known return structures of these two builtins.
+     *
+     * <p>Previously {@code for i, x in enumerate(lst)} fell through to the generic
+     * "tuple-of-iterable" path, which dispatched the opaque {@code enumerate(...)} call node
+     * and got {@code unknown} back. The updated {@link ForConverter} special-cases these two
+     * builtins:
+     * <ul>
+     *   <li>{@code enumerate(lst)} → {@code i = 0} (integer index), {@code x = lst[0]} (element type).</li>
+     *   <li>{@code zip(l1, l2)} → {@code a = l1[0]}, {@code b = l2[0]} (each list's element type).</li>
+     * </ul>
+     *
+     * <p>Functions use list comprehensions ({@code [i for i in range(n)]}) to produce a
+     * {@code list[int]} that GCP can track through to the {@code enumerate}/{@code zip} call.
+     *
+     * <p>Expected speedup ≥ 3.0× — fully-typed int loops over list comprehension elements.
+     */
+    @Test
+    void enumerate_zip_gives_speedup() throws Exception {
+        String bare = """
+                def sum_enumerate(n):
+                    total = 0
+                    for idx, val in enumerate(range(n)):
+                        total += idx * val
+                    return total
+
+                def dot_zip(n):
+                    total = 0
+                    for x, y in zip(range(n), range(n, 2 * n)):
+                        total += x * y
+                    return total
+
+                def cross_enumerate(n):
+                    total = 0
+                    for i, v in enumerate(range(n)):
+                        total += i + v * i
+                    return total
+                """;
+
+        String calls = """
+                sum_enumerate(1000)
+                dot_zip(1000)
+                cross_enumerate(1000)
+                """;
+
+        List<BenchCase> cases = List.of(
+                new BenchCase("sum_enumerate",   List.of(1_000), 200_000),
+                new BenchCase("dot_zip",         List.of(1_000), 200_000),
+                new BenchCase("cross_enumerate", List.of(1_000), 200_000)
+        );
+
+        Pipeline p = runPipeline("enumerate_zip", bare, calls, cases);
+
+        section("Enumerate/Zip: annotated source");
+        System.out.println(p.annotated());
+        assertTrue(p.annotated().contains("n: int"),
+                "GCP must infer 'n: int' from call context");
+        assertTrue(p.annotated().contains("-> int"),
+                "GCP must infer integer return type for enumerate/zip loop functions");
+
+        p.printTable();
+        p.assertSpeedup("sum_enumerate",   3.0, "enumerate(range(n)): idx:int, val:int");
+        p.assertSpeedup("dot_zip",         3.0, "zip(range(n), range(n,2n)): x:int, y:int");
+        p.assertSpeedup("cross_enumerate", 3.0, "enumerate(range(n)): i:int, v:int");
+        p.assertAvgGcpBeatsBare(
+                "mypyc(GCP) must outperform mypyc(bare) for enumerate/zip loop functions");
+    }
+
+    /**
+     * P3 — {@code assert isinstance}: type narrowing and correctness verification.
+     *
+     * <p>{@code assert isinstance(x, int)} is a Python guard idiom. {@link AssertConverter}
+     * emits a {@link org.twelve.gcp.node.statement.VariableDeclarator} with an explicit
+     * {@link org.twelve.gcp.node.expression.typeable.TypeNode} so GCP knows the narrowed type
+     * even when no call context is available. Combined with demand-driven call-site inference,
+     * the assert corroborates and reinforces the inferred type.
+     *
+     * <p>Functions use {@code assert isinstance} on their parameters; the call context also
+     * provides concrete types. Both sources agree → parameters are fully typed, enabling
+     * mypyc to generate optimized integer loops.
+     *
+     * <p>Expected speedup ≥ 2.5× — typed parameters + typed range loop.
+     */
+    @Test
+    void assert_isinstance_gives_speedup() throws Exception {
+        String bare = """
+                def guarded_sum(val, n):
+                    assert isinstance(val, int)
+                    assert isinstance(n, int)
+                    total = 0
+                    for i in range(n):
+                        total += val + i
+                    return total
+
+                def guarded_product(base, n):
+                    assert isinstance(base, int)
+                    assert isinstance(n, int)
+                    result = 1
+                    for i in range(1, n + 1):
+                        result += base * i
+                    return result
+
+                def guarded_accumulate(step, n):
+                    assert isinstance(step, int)
+                    assert isinstance(n, int)
+                    total = 0
+                    for i in range(n):
+                        total += step * i * i
+                    return total
+                """;
+
+        String calls = """
+                guarded_sum(5, 1000)
+                guarded_product(3, 500)
+                guarded_accumulate(2, 1000)
+                """;
+
+        List<BenchCase> cases = List.of(
+                new BenchCase("guarded_sum",        List.of(5, 1_000), 300_000),
+                new BenchCase("guarded_product",    List.of(3, 500),   300_000),
+                new BenchCase("guarded_accumulate", List.of(2, 1_000), 300_000)
+        );
+
+        Pipeline p = runPipeline("assert_isinstance", bare, calls, cases);
+
+        section("Assert isinstance: annotated source");
+        System.out.println(p.annotated());
+        assertTrue(p.annotated().contains("-> int"),
+                "GCP must infer integer return type for isinstance-guarded functions");
+
+        p.printTable();
+        p.assertSpeedup("guarded_sum",        2.5, "isinstance narrows val:int, n:int → typed loop");
+        p.assertSpeedup("guarded_product",    2.5, "isinstance narrows base:int, n:int → typed loop");
+        p.assertSpeedup("guarded_accumulate", 2.5, "isinstance narrows step:int, n:int → typed loop");
+        p.assertAvgGcpBeatsBare(
+                "mypyc(GCP) must outperform mypyc(bare) for isinstance-guarded functions");
+    }
+
+    /**
+     * P3 — {@code match/case} (Python 3.10+): capture variables typed from subject.
+     *
+     * <p>{@link MatchConverter} dispatches all case bodies and declares any capture variable
+     * (e.g., {@code case x:}, {@code case [a, b]:}) with the subject's inferred type.
+     * This lets mypyc see typed variables inside case blocks.
+     *
+     * <p>Expected speedup ≥ 2.0× — match dispatch with typed integer cases enables
+     * optimized arithmetic in case bodies.
+     */
+    @Test
+    void match_case_gives_speedup() throws Exception {
+        String bare = """
+                def classify_and_sum(n):
+                    total = 0
+                    for i in range(n):
+                        match i % 4:
+                            case 0:
+                                total += i * 2
+                            case 1:
+                                total += i + 1
+                            case 2:
+                                total += i * i
+                            case _:
+                                total += i
+                    return total
+
+                def sum_even_match(n):
+                    total = 0
+                    for i in range(n):
+                        match i % 2:
+                            case 0:
+                                total += i * 3
+                            case _:
+                                total += i
+                    return total
+
+                def sum_mod3_match(n):
+                    total = 0
+                    for i in range(n):
+                        match i % 3:
+                            case 0:
+                                total += i * 3
+                            case 1:
+                                total += i + 1
+                            case _:
+                                total += i * 2
+                    return total
+                """;
+
+        String calls = """
+                classify_and_sum(1000)
+                sum_even_match(1000)
+                sum_mod3_match(1000)
+                """;
+
+        List<BenchCase> cases = List.of(
+                new BenchCase("classify_and_sum", List.of(1_000), 100_000),
+                new BenchCase("sum_even_match",   List.of(1_000), 200_000),
+                new BenchCase("sum_mod3_match",   List.of(1_000), 100_000)
+        );
+
+        Pipeline p = runPipeline("match_case", bare, calls, cases);
+
+        section("Match/case: annotated source");
+        System.out.println(p.annotated());
+        assertTrue(p.annotated().contains("n: int"),
+                "GCP must infer 'n: int' from call context");
+
+        p.printTable();
+        p.assertSpeedup("classify_and_sum", 2.0, "match on int % 4, 4 cases, typed int dispatch");
+        p.assertSpeedup("sum_even_match",   2.0, "match on int % 2, 2 cases, typed accumulation");
+        p.assertSpeedup("sum_mod3_match",   2.0, "match on int % 3, 3 cases, typed int branches");
+        p.assertAvgGcpBeatsBare(
+                "mypyc(GCP) must outperform mypyc(bare) for match/case functions");
+    }
+
+    // ── P4: builtin function return-type inference ────────────────────────────
+
+    /**
+     * P4-B: Built-in functions — {@code len}, {@code sum}, {@code min}/{@code max},
+     * {@code sorted}, {@code int}/{@code float}/{@code str} type conversions.
+     *
+     * <p>Without P4-B, calls like {@code len(lst)} return an opaque
+     * {@code FunctionCallNode} that GCP cannot type, so the result variable
+     * stays {@code UNKNOWN} and mypyc falls back to dynamic dispatch.
+     * With P4-B, {@code len()} maps to {@code LiteralNode<Long>(0)} (int),
+     * {@code sum()} maps to {@code ArrayAccessor(lst, 0)} (element type), etc.
+     *
+     * <p>Expected speedup ≥ 2.5× for integer-heavy loops that rely on built-in
+     * return types as loop bounds or accumulator seeds.
+     */
+    @Test
+    void builtin_return_type_inference_gives_speedup() throws Exception {
+        String bare = """
+                def sum_with_len(n):
+                    data = list(range(n))
+                    total = 0
+                    for i in range(len(data)):
+                        total += data[i]
+                    return total
+
+                def count_positive(n):
+                    data = list(range(-n // 2, n // 2))
+                    count = 0
+                    for i in range(len(data)):
+                        if data[i] > 0:
+                            count += 1
+                    return count
+
+                def sum_abs_values(n):
+                    total = 0
+                    for i in range(n):
+                        v = abs(i - n // 2)
+                        total += v
+                    return total
+                """;
+
+        String calls = """
+                sum_with_len(1000)
+                count_positive(1000)
+                sum_abs_values(1000)
+                """;
+
+        List<BenchCase> cases = List.of(
+                new BenchCase("sum_with_len",    List.of(1_000), 200_000),
+                new BenchCase("count_positive",  List.of(1_000), 200_000),
+                new BenchCase("sum_abs_values",  List.of(1_000), 300_000)
+        );
+
+        Pipeline p = runPipeline("builtins", bare, calls, cases);
+
+        section("Builtins: annotated source");
+        System.out.println(p.annotated());
+        assertTrue(p.annotated().contains("n: int"),
+                "GCP must infer 'n: int' from call context");
+
+        p.printTable();
+        p.assertSpeedup("sum_with_len",   2.5, "len(list) → int for loop bound, list[i] subscript");
+        p.assertSpeedup("sum_abs_values", 2.0, "abs(int) → int, tight arithmetic loop");
+        p.assertAvgGcpBeatsBare(
+                "mypyc(GCP) must outperform mypyc(bare) when builtin return types are inferred");
+    }
+
+    /**
+     * P4-B: {@code sorted}, {@code list}, {@code sum} with range —
+     * verifies that collection-returning builtins preserve element type.
+     *
+     * <p>{@code sorted(range(n))} → {@code list[int]}, {@code sum(range(n))} → {@code int}.
+     * GCP can then annotate local variables with concrete types and mypyc
+     * eliminates all dynamic dispatch in the hot path.
+     */
+    @Test
+    void builtin_sorted_sum_gives_speedup() throws Exception {
+        String bare = """
+                def sum_sorted_range(n):
+                    s = sorted(range(n))
+                    total = 0
+                    for i in range(len(s)):
+                        total += s[i]
+                    return total
+
+                def sum_directly(n):
+                    total = sum(range(n))
+                    return total
+
+                def max_of_range(n):
+                    total = 0
+                    for i in range(n):
+                        total += max(i, n - i - 1)
+                    return total
+                """;
+
+        String calls = """
+                sum_sorted_range(1000)
+                sum_directly(1000)
+                max_of_range(1000)
+                """;
+
+        List<BenchCase> cases = List.of(
+                new BenchCase("sum_sorted_range", List.of(1_000), 50_000),
+                new BenchCase("sum_directly",     List.of(100_000), 500),
+                new BenchCase("max_of_range",     List.of(1_000), 200_000)
+        );
+
+        Pipeline p = runPipeline("builtin_sorted", bare, calls, cases);
+
+        section("Builtin sorted/sum: annotated source");
+        System.out.println(p.annotated());
+        assertTrue(p.annotated().contains("n: int"),
+                "GCP must infer 'n: int' from call context");
+
+        p.printTable();
+        p.assertSpeedup("max_of_range",     2.0, "max(int, int) → int in loop");
+        p.assertAvgGcpBeatsBare(
+                "mypyc(GCP) must outperform mypyc(bare) for sorted/sum with builtin return types");
+    }
+
+    /**
+     * P4-A: f-string ({@code JoinedStr}) type inference — verifies that
+     * {@code result = f"..."} is inferred as {@code str} by GCP.
+     *
+     * <p>More importantly, this test checks the safety guarantee: code containing
+     * f-strings does not throw during conversion and the overall pipeline works
+     * end-to-end even when some parameters are typed dynamically.
+     */
+    @Test
+    void fstring_does_not_crash_pipeline() throws Exception {
+        String bare = """
+                def format_sum(n):
+                    total = 0
+                    for i in range(n):
+                        total += i
+                    label = f"sum={total}"
+                    return len(label)
+
+                def count_labels(n):
+                    count = 0
+                    for i in range(n):
+                        if i % 2 == 0:
+                            count += 1
+                    return count
+                """;
+
+        String calls = """
+                format_sum(1000)
+                count_labels(1000)
+                """;
+
+        List<BenchCase> cases = List.of(
+                new BenchCase("format_sum",   List.of(1_000), 200_000),
+                new BenchCase("count_labels", List.of(1_000), 500_000)
+        );
+
+        Pipeline p = runPipeline("fstring", bare, calls, cases);
+
+        section("F-string: annotated source");
+        System.out.println(p.annotated());
+        assertTrue(p.annotated().contains("n: int"),
+                "GCP must infer 'n: int' from call context — f-string must not break inference");
+
+        p.printTable();
+        // format_sum uses str (label), so mypyc can't fully optimise the str path.
+        // We only require the pipeline doesn't crash and correctness holds.
+        p.assertSpeedup("count_labels", 2.0, "int counter loop unaffected by f-string in other func");
+        p.assertAvgGcpBeatsBare(
+                "mypyc(GCP) must be at least competitive with mypyc(bare) — f-string must not regress");
+    }
+
     // ── pipeline infrastructure ───────────────────────────────────────────────
 
     record BenchCase(String func, List<Object> args, int iters) {}

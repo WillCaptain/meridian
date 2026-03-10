@@ -17,6 +17,8 @@ public class IfStatementConverter extends PyConverter {
 
     @Override
     public Node convert(AST ast, Map<String, Object> pyNode, Node parent) {
+        // Dispatch condition so NamedExpr (:=) in if-conditions can declare variables
+        dispatch(ast, mapOf(pyNode, "test"), parent);
         for (Map<String, Object> stmt : listOf(pyNode, "body")) dispatch(ast, stmt, parent);
         for (Map<String, Object> stmt : listOf(pyNode, "orelse")) dispatch(ast, stmt, parent);
         return null;

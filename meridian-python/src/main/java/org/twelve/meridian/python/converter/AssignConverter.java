@@ -35,7 +35,7 @@ public class AssignConverter extends PyConverter {
         boolean declared = false;
 
         for (Map<String, Object> target : listOf(pyNode, "targets")) {
-            Assignable assignable = buildAssignable(ast, target);
+            Assignable assignable = buildAssignable(ast, target, parent, value);
             if (assignable != null) {
                 decl.declare(assignable, value);
                 declared = true;
@@ -47,19 +47,25 @@ public class AssignConverter extends PyConverter {
         return decl;
     }
 
-    private Assignable buildAssignable(AST ast, Map<String, Object> target) {
+    private Assignable buildAssignable(AST ast, Map<String, Object> target, Node parent, Expression value) {
         String t = typeOf(target);
         if ("Name".equals(t)) {
             return identifier(ast, strOf(target, "id"));
         }
         if ("Tuple".equals(t) || "List".equals(t)) {
-            return buildTupleUnpack(ast, target);
+            return buildTupleUnpack(ast, target, parent, value);
         }
         return null;
     }
 
-    /** Build a {@link TupleUnpackNode} for patterns like {@code a, b = ...} or {@code a, *b, c = ...}. */
-    private TupleUnpackNode buildTupleUnpack(AST ast, Map<String, Object> target) {
+    /**
+     * Build a {@link TupleUnpackNode} for patterns like {@code a, b = ...} or {@code a, *rest, c = ...}.
+     *
+     * <p>The starred variable ({@code *rest}) is separately declared as holding the full iterable
+     * expression so GCP can infer its element type (e.g. {@code rest: list[int]} when value is a
+     * {@code list[int]}).
+     */
+    private TupleUnpackNode buildTupleUnpack(AST ast, Map<String, Object> target, Node parent, Expression value) {
         List<Node> begins = new ArrayList<>();
         List<Node> ends = new ArrayList<>();
         boolean starSeen = false;
@@ -67,6 +73,16 @@ public class AssignConverter extends PyConverter {
         for (Map<String, Object> elt : listOf(target, "elts")) {
             if ("Starred".equals(typeOf(elt))) {
                 starSeen = true;
+                // Declare the starred variable with the full iterable value so its list type propagates
+                Map<String, Object> starValue = mapOf(elt, "value");
+                if (starValue != null && value != null) {
+                    String restName = strOf(starValue, "id");
+                    if (restName != null) {
+                        VariableDeclarator restDecl = new VariableDeclarator(ast, VariableKind.VAR);
+                        restDecl.declare(identifier(ast, restName), value);
+                        addStatement(ast, parent, restDecl);
+                    }
+                }
                 continue;
             }
             Identifier id = resolveIdentifier(ast, elt);

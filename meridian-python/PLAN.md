@@ -44,11 +44,11 @@ Python source (有注解) / .pyi stub
 
 | 节点类型 | 说明 | 状态 |
 |----------|------|------|
-| `ListComp` / `DictComp` / `SetComp` / `GeneratorExp` | 推导式：Python 最常用的高性能模式 | 待实现 |
-| `Lambda` | 匿名函数，HOF 场景（sorted/map/filter） | 待实现 |
-| 函数体内 `AnnAssign` | 局部带注解变量类型丢失问题 | 待实现 |
-| `For` 循环变量类型 | `for x in lst` 中 `x` 的类型推断 | 待实现 |
-| 默认参数推断 | `def f(x=0)` 中 `x: int` | 待实现 |
+| `ListComp` / `DictComp` / `SetComp` / `GeneratorExp` | 推导式：Python 最常用的高性能模式 | ✅ 已完成 |
+| `Lambda` | 匿名函数，HOF 场景（sorted/map/filter） | ✅ 已完成 |
+| 函数体内 `AnnAssign` | 局部带注解变量类型丢失问题 | ✅ 已完成 |
+| `For` 循环变量类型 | `for x in lst` 中 `x` 的类型推断 | ✅ 已完成 |
+| 默认参数推断 | `def f(x=0)` 中 `x: int`，无需 call context | ✅ 已完成 |
 
 ---
 
@@ -56,11 +56,56 @@ Python source (有注解) / .pyi stub
 
 | 节点类型 | 说明 | 状态 |
 |----------|------|------|
-| `*args` / `**kwargs` 基础类型 | 至少推断为 `list[Any]` / `dict[str, Any]` | 待实现 |
-| `NamedExpr` 海象运算符 `:=` | Python 3.8+ | 待实现 |
-| `Starred` 展开 | `f(*args)` 调用中的展开参数 | 待实现 |
+| `NamedExpr` 海象运算符 `:=` | `n := expr` → `VariableDeclarator` + 返回标识符；`Compare`/`BinOp` 传播 parent | ✅ 已完成 |
+| `Starred` 展开赋值 | `a, *rest = lst` → rest 获得 `list` 类型；独立 `VariableDeclarator` 声明 | ✅ 已完成 |
+| `*args` / `**kwargs` 签名类型 | `rewriteArgs` 剥离 `*`/`**` 前缀后匹配类型，保留前缀输出 | ✅ 已完成 |
 | `Assert` 类型收窄 | `assert isinstance(x, int)` → GCP 类型收窄 | 待实现 |
 | `Try/Except` handler 变量 | `except ValueError as e:` 中 `e: ValueError` | 待实现 |
+
+---
+
+## P3 — 进阶模式（常用 Python 习惯用法覆盖）
+
+| 节点类型 | 说明 | 状态 |
+|----------|------|------|
+| `enumerate` / `zip` in `For` | `for i, x in enumerate(range(n))` → `i: int, x: int`；`for a, b in zip(l1, l2)` → `a: T1, b: T2`；range 嵌套直接返回 int | ✅ 已完成 |
+| `Assert isinstance` 类型收窄 | `assert isinstance(x, int)` → 声明 `x: int`；与 call-site inference 协同 | ✅ 已完成 |
+| `Try/Except` handler 变量 | `except ValueError as e:` → 声明 `e: ValueError`；orelse/finalbody 均 dispatch | ✅ 已完成 |
+| `match/case` 模式匹配 | Python 3.10+：`MatchConverter` + `MatchAs`/`MatchStar`/`MatchSequence`/`MatchMapping` 绑定变量 | ✅ 已完成 |
+
+---
+
+---
+
+## P4 — 鲁棒性 + 内置函数推断
+
+### P4-A：安全网（不崩溃保障）
+
+| 节点类型 | 说明 | 状态 |
+|----------|------|------|
+| `Raise` | 异常抛出，直接 NoOp | ✅ 已完成 |
+| `AsyncFor` | 异步 for 循环，NoOp | ✅ 已完成 |
+| `AsyncWith` | 异步 with 块，NoOp | ✅ 已完成 |
+| `Await` | await 表达式，NoOp | ✅ 已完成 |
+| `Yield` | yield 表达式，NoOp | ✅ 已完成 |
+| `YieldFrom` | yield from，NoOp | ✅ 已完成 |
+| `JoinedStr` | f-string → `LiteralNode("")`，推断为 `str` | ✅ 已完成 |
+| `FormattedValue` | f-string 内的插值节点，NoOp | ✅ 已完成 |
+| `Slice` | `a[1:n]` 中的 slice 节点，NoOp（SubscriptConverter 已返回 array 类型） | ✅ 已完成 |
+
+### P4-B：内置函数返回类型推断
+
+| 内置函数 | 返回类型策略 | 状态 |
+|----------|-------------|------|
+| `len(x)` / `ord(c)` / `hash(x)` / `id(x)` | → `int` (`LiteralNode<Long>`) | ✅ 已完成 |
+| `int(x)` | → `int` | ✅ 已完成 |
+| `float(x)` | → `float` (`LiteralNode<Double>`) | ✅ 已完成 |
+| `str(x)` / `chr(i)` / `repr(x)` / `hex` / `bin` / `oct` | → `str` (`LiteralNode<String>`) | ✅ 已完成 |
+| `abs(x)` | → 与参数同类型（dispatch 第一个 arg） | ✅ 已完成 |
+| `range(n)` as value | → `list[int]` (`ArrayNode([intLit])`) | ✅ 已完成 |
+| `sum(iterable)` | → 迭代器元素类型（`ArrayAccessor(iter, 0)` / `intLit` for range） | ✅ 已完成 |
+| `min(a, b)` / `max(a, b)` | 单参数 → 元素类型；多参数 → 第一个参数类型 | ✅ 已完成 |
+| `sorted(x)` / `list(x)` / `reversed(x)` / `tuple(x)` | → 与输入集合同类型 | ✅ 已完成 |
 
 ---
 
