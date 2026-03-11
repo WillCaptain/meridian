@@ -109,6 +109,17 @@ public abstract class PyConverter {
                     TypeNode inner = buildTypeNode(ast, sliceNode);
                     yield inner == null ? new ArrayTypeNode(ast) : new ArrayTypeNode(ast, inner);
                 }
+                if ("Iterator".equals(outerName) || "Iterable".equals(outerName)
+                        || "Sequence".equals(outerName) || "Generator".equals(outerName)) {
+                    // Generator[YieldType, SendType, ReturnType] — take the first type arg
+                    Map<String, Object> firstArg = sliceNode;
+                    if ("Generator".equals(outerName)) {
+                        List<Map<String, Object>> elts = listOf(sliceNode, "elts");
+                        if (!elts.isEmpty()) firstArg = elts.getFirst();
+                    }
+                    TypeNode inner = buildTypeNode(ast, firstArg);
+                    yield inner == null ? new ArrayTypeNode(ast) : new ArrayTypeNode(ast, inner);
+                }
                 if ("dict".equalsIgnoreCase(outerName) || "Dict".equals(outerName)) {
                     yield new IdentifierTypeNode(identifier(ast, "Dict"));
                 }

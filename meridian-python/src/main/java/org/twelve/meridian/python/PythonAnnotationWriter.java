@@ -12,6 +12,8 @@ import org.twelve.gcp.node.function.FunctionCallNode;
 import org.twelve.gcp.node.function.FunctionNode;
 import org.twelve.gcp.node.statement.VariableDeclarator;
 import org.twelve.gcp.outline.Outline;
+import org.twelve.gcp.outline.builtin.UNKNOWN;
+import org.twelve.gcp.outline.projectable.Genericable;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -105,7 +107,15 @@ public class PythonAnnotationWriter {
         if (!originalSource.endsWith("\n") && out.length() > 0) {
             out.setLength(out.length() - 1);
         }
-        return out.toString();
+        String result = out.toString();
+        // Inject Iterator import when needed and not already present as an import statement.
+        // Check for "import Iterator" specifically (not just "Iterator") to avoid a false positive
+        // when the annotation "-> Iterator[int]" was just injected into a function signature.
+        boolean needsIterator = nameToType.values().stream().anyMatch(v -> v.contains("Iterator["));
+        if (needsIterator && !result.contains("import Iterator")) {
+            result = "from typing import Iterator\n" + result;
+        }
+        return result;
     }
 
     // ── type collection ────────────────────────────────────────────────────────
@@ -216,17 +226,32 @@ public class PythonAnnotationWriter {
      * This keeps the implementation simple while correctly handling the common case
      * where the usage context calls library functions with typed literals.
      */
+    /**
+     * Propagate call-site argument types from {@code usageAst} into the library's function
+     * parameter constraints (Genericable hasToBe), so that {@link TypeAnnotationGenerator}
+     * can see the concrete types when generating stubs.
+     *
+     * <p>This is a lightweight version of {@link #augmentFromCallSites} that only does
+     * constraint propagation without building a type map — call it from the inference pipeline
+     * so stubs are correct even when the full annotate pipeline is not run.
+     */
+    public void propagateCallSiteTypes(AST libraryAst, AST usageAst) {
+        augmentFromCallSites(new LinkedHashMap<>(), libraryAst, usageAst);
+    }
+
     private void augmentFromCallSites(Map<String, String> out, AST libraryAst, AST usageAst) {
-        // Build func → [paramName, ...] from the library AST
+        // Build func → [Argument, ...] from the library AST (we need the Argument objects to
+        // propagate call-site types back into the library's Genericable parameter constraints).
+        Map<String, List<Argument>> funcArgs = new LinkedHashMap<>();
         Map<String, List<String>> funcParams = new LinkedHashMap<>();
         for (var stmt : libraryAst.program().body().statements()) {
             if (stmt instanceof VariableDeclarator vd) {
                 for (Assignment a : vd.assignments()) {
                     if (a.rhs() instanceof FunctionNode fn) {
                         String fname = a.lhs().lexeme().trim().replaceAll(":.*", "").trim();
-                        List<String> pnames = typeGen.flattenFunctionArgs(fn).stream()
-                                .map(Argument::name).toList();
-                        funcParams.put(fname, pnames);
+                        List<Argument> args = typeGen.flattenFunctionArgs(fn);
+                        funcArgs.put(fname, args);
+                        funcParams.put(fname, args.stream().map(Argument::name).toList());
                     }
                 }
             }
@@ -234,30 +259,57 @@ public class PythonAnnotationWriter {
         if (funcParams.isEmpty()) return;
 
         // Traverse usage AST and collect call-site argument types
-        scanCallSites(usageAst.program(), funcParams, out);
+        scanCallSites(usageAst.program(), funcParams, funcArgs, out);
     }
 
     private void scanCallSites(Node node, Map<String, List<String>> funcParams,
+                                Map<String, List<Argument>> funcArgs,
                                 Map<String, String> out) {
         if (node instanceof FunctionCallNode call) {
             if (call.function() instanceof Identifier id) {
                 String fname = id.name();
                 List<String> params = funcParams.get(fname);
+                List<Argument> libArgs = funcArgs.get(fname);
                 if (params != null) {
                     List<Expression> args = call.arguments();
                     for (int i = 0; i < Math.min(params.size(), args.size()); i++) {
-                        Outline argOutline = args.get(i).outline();
+                        Expression argNode = args.get(i);
+                        // Force-infer if the argument was not resolved by the joint inference pass.
+                        // This happens when the callee (e.g. a library function) is not in scope of
+                        // the usage AST (no import), so FunctionCallInference returned Pending and
+                        // the argument nodes never had their own inference triggered.
+                        // Dict/Array/Literal arguments are self-contained and safe to infer here.
+                        if (argNode.outline() instanceof UNKNOWN) {
+                            argNode.infer(argNode.ast().inferences());
+                        }
+                        Outline argOutline = argNode.outline();
                         String typeStr = typeGen.outlineToTypeStr(argOutline);
                         if (typeStr != null) {
                             // putIfAbsent: first call site wins; never overwrite declared types
                             out.putIfAbsent(fname + "#" + params.get(i), typeStr);
+                        }
+                        // Propagate the call-site type into the library parameter's Genericable
+                        // constraint so that stub generation (TypeAnnotationGenerator) can see it.
+                        // Only skip when the parameter already has a user-written type annotation.
+                        // Structural constraints set by GCP from body usage (e.g. definedToBe from
+                        // subscript access) are NOT a reason to skip — they should be compatible with
+                        // the call-site type and addHasToBe will validate that internally.
+                        if (libArgs != null && i < libArgs.size() && argOutline != null
+                                && !(argOutline instanceof UNKNOWN)) {
+                            Argument libArg = libArgs.get(i);
+                            if (libArg.declared() == null) {
+                                Outline paramOutline = libArg.outline();
+                                if (paramOutline instanceof Genericable<?, ?> g) {
+                                    g.addHasToBe(argOutline);
+                                }
+                            }
                         }
                     }
                 }
             }
         }
         for (Node child : node.nodes()) {
-            scanCallSites(child, funcParams, out);
+            scanCallSites(child, funcParams, funcArgs, out);
         }
     }
 

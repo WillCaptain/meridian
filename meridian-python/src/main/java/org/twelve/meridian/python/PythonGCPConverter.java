@@ -45,6 +45,24 @@ public class PythonGCPConverter {
         return converters;
     }
 
+    /**
+     * Register a {@link ModuleLoader} so that {@link ImportFromConverter} can
+     * automatically load and GCP-convert imported Python modules during conversion.
+     *
+     * <p>A pre-loaded-module set is managed internally to ensure each module is
+     * converted at most once per {@link ASF} session.
+     *
+     * @param loader the module loader to use; {@code null} clears any existing loader
+     */
+    public void setModuleLoader(ModuleLoader loader) {
+        if (loader == null) {
+            converters.remove(ModuleLoaderAdapter.REGISTRY_KEY);
+        } else {
+            converters.put(ModuleLoaderAdapter.REGISTRY_KEY,
+                    new ModuleLoaderAdapter(converters, loader));
+        }
+    }
+
     // ── registration ──────────────────────────────────────────────────────────
 
     private void registerAll() {
@@ -84,13 +102,15 @@ public class PythonGCPConverter {
         converters.put("Break",         noop);
         converters.put("Continue",      noop);
 
-        // P4-A: safety-net — async / generator / exception-raise / slice
+        // P4-A: safety-net — async / exception-raise / slice
         converters.put("Raise",         noop);
         converters.put("AsyncFor",      noop);
         converters.put("AsyncWith",     noop);
         converters.put("Await",         noop);
-        converters.put("Yield",         noop);
-        converters.put("YieldFrom",     noop);
+
+        // P11: generator type inference
+        converters.put("Yield",         new YieldConverter(converters));
+        converters.put("YieldFrom",     new YieldFromConverter(converters));
         converters.put("FormattedValue",noop);
         converters.put("Slice",         noop);
 

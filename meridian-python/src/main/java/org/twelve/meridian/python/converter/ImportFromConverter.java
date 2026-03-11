@@ -10,7 +10,13 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
-/** Handles {@code ImportFrom}: {@code from foo import bar, baz as qux}. */
+/**
+ * Handles {@code ImportFrom}: {@code from foo import bar, baz as qux}.
+ *
+ * <p>P6: If a {@link ModuleLoaderAdapter} is registered in the converter registry,
+ * this converter automatically triggers loading and GCP-converting the referenced
+ * module so its symbols are available during joint ASF inference.
+ */
 public class ImportFromConverter extends PyConverter {
 
     public ImportFromConverter(Map<String, PyConverter> converters) {
@@ -31,6 +37,13 @@ public class ImportFromConverter extends PyConverter {
             vars.add(new Pair<>(imported, local));
         }
         ast.addImport(new Import(vars, sourceIds));
+
+        // P6: attempt to load and convert the imported module into the shared ASF
+        PyConverter loaderConv = converters.get(ModuleLoaderAdapter.REGISTRY_KEY);
+        if (loaderConv instanceof ModuleLoaderAdapter mla && !"__future__".equals(module)) {
+            mla.load(module);   // no-op if module is unknown or already loaded
+        }
+
         return null;
     }
 }

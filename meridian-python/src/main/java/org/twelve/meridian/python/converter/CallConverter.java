@@ -116,14 +116,18 @@ public class CallConverter extends PyConverter {
     // ── P5-A: method call return-type inference ──────────────────────────────
 
     /**
-     * Infers the return type of a method call on a Python built-in type
-     * (str, list, dict, set, int) without delegating to GCP's member-access
-     * inference, which would report {@code FIELD_NOT_FOUND} for primitive types.
+     * Infers the return type of a method call.
      *
-     * <p>Strategy: method name → canonical return-type expression.
-     * Only methods whose return type is independent of the receiver's concrete
-     * generic parameter (or derivable from it via {@link ArrayAccessor}) are handled.
-     * All others fall through to a regular {@link FunctionCallNode}.
+     * <p><b>P5-A</b>: For well-known Python built-in type methods (str, list, int, …) the return
+     * type is inferred from a hard-coded name → expression table, bypassing GCP's member-access
+     * inference which reports {@code FIELD_NOT_FOUND} for primitive types.
+     *
+     * <p><b>P7</b>: For any unrecognised method name, the call is desugared to a top-level
+     * function call: {@code obj.method(args)} → {@code method(obj, args)}.  This works because
+     * {@link org.twelve.meridian.python.converter.ClassDefConverter ClassDefConverter} registers
+     * each class method as a module-level function, so GCP's inference can resolve the callee and
+     * propagate the receiver type to the {@code self} parameter.  Methods not found in the symbol
+     * table simply produce {@code UNKNOWN}, identical to the previous {@code FIELD_NOT_FOUND} path.
      *
      * @param funcNode the {@code Attribute} AST node ({@code value} = receiver, {@code attr} = method)
      * @param callNode the full {@code Call} AST node (for accessing args)
@@ -167,12 +171,28 @@ public class CallConverter extends PyConverter {
             case "split", "rsplit", "splitlines", "partition", "rpartition"
                     -> new ArrayNode(ast, new Expression[]{ strLit(ast) });
 
-            // ── list.pop() / set.pop() → element type of receiver ─────────────
+            // ── dict.get(key) / list.pop([i]) → element/value type of receiver ──
+            // For dict: d.get(key) ≈ d[key] in type semantics → value type V.
+            // For list: list.pop([i]) → element type via ArrayAccessor(recv, arg-or-0).
+            case "get" -> {
+                Map<String, Object> recvNode = mapOf(funcNode, "value");
+                Expression recv = (Expression) dispatch(ast, recvNode);
+                if (recv == null) yield null;
+                Expression keyExpr = args.isEmpty() ? null
+                        : (Expression) dispatch(ast, args.get(0));
+                if (keyExpr == null) yield null;
+                yield new ArrayAccessor(ast, recv, keyExpr);
+            }
+
             case "pop" -> {
                 Map<String, Object> recvNode = mapOf(funcNode, "value");
                 Expression recv = (Expression) dispatch(ast, recvNode);
                 if (recv == null) yield null;
-                yield new ArrayAccessor(ast, recv, intLit(ast));
+                // dict.pop(key) uses the key arg; list.pop() uses index 0
+                Expression keyExpr = args.isEmpty() ? intLit(ast)
+                        : (Expression) dispatch(ast, args.get(0));
+                if (keyExpr == null) keyExpr = intLit(ast);
+                yield new ArrayAccessor(ast, recv, keyExpr);
             }
 
             // ── mutations that return None ────────────────────────────────────
@@ -181,7 +201,34 @@ public class CallConverter extends PyConverter {
                  "__setitem__"
                     -> LiteralNode.parse(ast, new Token<>(null, 0));
 
-            default -> null;
+            // ── P9: dict built-in methods — pass through to GCP's Dict.loadBuiltInMethods ──
+            // Returning null here bypasses P7 desugaring and lets the outer convert() method
+            // produce FunctionCallNode(MemberAccessor(recv, "keys/values/items"), []), which
+            // MemberAccessorInference resolves via Dict.loadBuiltInMethods().
+            // keys()   → Array<K>  (all keys as list)
+            // values() → Array<V>  (all values as list)
+            // items()  → pass-through (GCP does not model items yet; gives UNKNOWN gracefully)
+            case "keys", "values", "items", "setdefault" -> null;
+
+            default -> {
+                // P7: user-defined class method — desugar obj.method(args) → method(obj, args).
+                // ClassDefConverter has already registered each class method as a module-level
+                // function; calling method(receiver, args) passes 'self' as the first argument
+                // so GCP can propagate the receiver type into the method body and infer the
+                // return type correctly.
+                Map<String, Object> recvNode = mapOf(funcNode, "value");
+                Expression receiver = (Expression) dispatch(ast, recvNode);
+                if (receiver == null) yield null;
+                Expression callee = identifier(ast, method);
+                List<Expression> allArgs = new ArrayList<>();
+                allArgs.add(receiver);
+                for (Map<String, Object> arg : args) {
+                    if ("Starred".equals(typeOf(arg))) continue;
+                    Expression e = (Expression) dispatch(ast, arg);
+                    if (e != null) allArgs.add(e);
+                }
+                yield new FunctionCallNode(callee, allArgs.toArray(new Expression[0]));
+            }
         };
     }
 

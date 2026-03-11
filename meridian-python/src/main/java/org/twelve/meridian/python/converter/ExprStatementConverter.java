@@ -18,7 +18,8 @@ public class ExprStatementConverter extends PyConverter {
     public Node convert(AST ast, Map<String, Object> pyNode, Node parent) {
         Map<String, Object> valueNode = mapOf(pyNode, "value");
         if (valueNode == null) return null;
-        Expression expr = (Expression) dispatch(ast, valueNode);
+        // Pass parent so that Yield/YieldFrom converters can add ReturnStatement directly.
+        Expression expr = (Expression) dispatch(ast, valueNode, parent);
         if (expr == null) return null;
         ExpressionStatement stmt = new ExpressionStatement(expr);
         addStatement(ast, parent, stmt);

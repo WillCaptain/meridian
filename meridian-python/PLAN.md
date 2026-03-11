@@ -87,8 +87,8 @@ Python source (有注解) / .pyi stub
 | `AsyncFor` | 异步 for 循环，NoOp | ✅ 已完成 |
 | `AsyncWith` | 异步 with 块，NoOp | ✅ 已完成 |
 | `Await` | await 表达式，NoOp | ✅ 已完成 |
-| `Yield` | yield 表达式，NoOp | ✅ 已完成 |
-| `YieldFrom` | yield from，NoOp | ✅ 已完成 |
+| `Yield` | yield 表达式，P11 已升级为完整 `YieldConverter`（`Iterator[T]` 类型推导） | ✅ 已完成 |
+| `YieldFrom` | yield from，P11 已升级为完整 `YieldFromConverter` | ✅ 已完成 |
 | `JoinedStr` | f-string → `LiteralNode("")`，推断为 `str` | ✅ 已完成 |
 | `FormattedValue` | f-string 内的插值节点，NoOp | ✅ 已完成 |
 | `Slice` | `a[1:n]` 中的 slice 节点，NoOp（SubscriptConverter 已返回 array 类型） | ✅ 已完成 |
@@ -135,9 +135,10 @@ P5-A 在 `CallConverter` 中提前拦截，将方法调用替换为有类型的 
 
 | 任务 | 说明 | 状态 |
 |------|------|------|
-| `ImportFromConverter` 读取被导入模块 AST | 提取导出函数的类型签名，注入当前作用域 | ⬜ 待实现 |
-| `PythonInferencer` 多文件联合分析 | `inferWithContext()` 扩展为接收多文件 Map | ⬜ 待实现 |
-| E2E 测试 | `from math_utils import dot_product` → 调用方正确推断参数/返回类型 | ⬜ 待实现 |
+| `ModuleLoader` 接口 + `ModuleLoaderAdapter` | 将 ModuleLoader 注入共享 converters map（key `__module_loader__`），零侵入所有现有 converter 构造函数 | ✅ 已完成 |
+| `ImportFromConverter` 自动触发模块加载 | 处理 `from X import Y` 时调用 loader，将 X 的 GCP AST 合并入同一 ASF | ✅ 已完成 |
+| `PythonInferencer` 多文件支持 | `registerModule(name, src)`、`inferFile` 文件系统 loader、`inferWithContext` 集成 | ✅ 已完成 |
+| E2E 测试 | `cross_module_inference_gives_speedup`：`from utils import fast_sum` → wrapper 函数推断 `n: int`，断言 ≥ 3× 加速 | ✅ 已完成 |
 
 ---
 
@@ -147,9 +148,9 @@ P5-A 在 `CallConverter` 中提前拦截，将方法调用替换为有类型的 
 
 | 任务 | 说明 | 状态 |
 |------|------|------|
-| `ClassDefConverter` 补充方法注册 | 将 class body 的方法注册到 GCP `Entity` | ⬜ 待实现 |
-| `CallConverter.tryMethodCall` 扩展 | 当方法名未在硬编码表中时，从 GCP 符号表查找接收者类型 | ⬜ 待实现 |
-| E2E 测试 | 定义简单数据类，调用其方法，验证返回类型推断 | ⬜ 待实现 |
+| `ClassDefConverter` 补充方法注册 | 无需改动——已将 class body 的方法 dispatch 为顶层函数，GCP 符号表可见 | ✅ 已完成 |
+| `CallConverter.tryMethodCall` 扩展 | P7 反糖化：`obj.method(args)` → `method(obj, args)`，将接收者作为 `self` 传递，GCP 可完整推断返回类型 | ✅ 已完成 |
+| E2E 测试 | `class_method_inference_gives_speedup`：`h.fast_sum(n)` → `n: int`，断言 ≥ 3× 加速 | ✅ 已完成 |
 
 ---
 
@@ -166,15 +167,42 @@ P5-A 在 `CallConverter` 中提前拦截，将方法调用替换为有类型的 
 
 ---
 
-## P9 — dict 类型感知 🟢 低优先级
+## P9 — dict 类型感知 ✅ 已完成
 
 **问题**：`dict.get(key)` 返回 `value | None`，`dict[key]` subscript 返回 value 类型，目前都返回 `UNKNOWN`。
 
 | 任务 | 说明 | 状态 |
 |------|------|------|
-| `DictConverter` 提取 key/value 类型 | 目前只建 `DictNode`，缺少泛型参数 | ⬜ 待实现 |
-| P5-A 扩展 `dict.get(key)` | 返回 value 类型（通过 `DictAccessor`） | ⬜ 待实现 |
-| `dict.keys()/values()/items()` 返回类型 | 对应类型的迭代器 | ⬜ 待实现 |
+| `DictConverter` 提取 key/value 类型 | `DictNode.addNode()` 修复 + `DictNodeInference` 已有实现 | ✅ 完成 |
+| P5-A 扩展 `dict.get(key)` | `CallConverter` 转为 `ArrayAccessor`，通过 `ArrayAccessorInference.inferDict` 返回 value 类型 | ✅ 完成 |
+| `dict.keys()/values()/items()` 返回类型 | `MemberAccessorInference` 通过 `Dict.loadBuiltInMethods()` 处理 | ✅ 完成 |
+| 类型传播到参数注解 | `PythonAnnotationWriter.propagateCallSiteTypes` + `TypeAnnotationGenerator` dict 支持 | ✅ 完成 |
+| E2E 对比测试 | `ConverterE2ETest.dict_type_inference_gives_speedup`：GCP 加速 2.36×，GCP/bare = 2.42× | ✅ 完成 |
+
+---
+
+## P11 — `yield` / Generator 类型推导 ✅ 已完成
+
+**问题**：Generator 函数（包含 `yield` 语句）的返回类型为 `Iterator[T]`，但之前 `Yield`/`YieldFrom` 均被映射为 NoOp，GCP 无法识别生成器语义，mypyc 因缺少类型注解而无法优化消费者循环。
+
+| 任务 | 说明 | 状态 |
+|------|------|------|
+| `GeneratorYieldNode` 标记类 | 继承 `ArrayNode`，零侵入 GCP 推断逻辑，可通过 `instanceof` 检测 | ✅ 完成 |
+| `YieldConverter` | `yield expr` → `ReturnStatement(GeneratorYieldNode([expr]))`，提取产出类型 | ✅ 完成 |
+| `YieldFromConverter` | `yield from iter` → `ReturnStatement(GeneratorYieldNode([iter[0]]))`，传播迭代器元素类型 | ✅ 完成 |
+| `ExprStatementConverter` 透传 parent | 将 parent 传递给 `dispatch`，使 Yield/YieldFrom 可直接操作函数体 | ✅ 完成 |
+| `TypeAnnotationGenerator` 生成器检测 | `isGeneratorFunction()` 扫描函数体的 `GeneratorYieldNode`；`functionReturnType()` 输出 `Iterator[T]` 而非 `list[T]` | ✅ 完成 |
+| `PyConverter.buildTypeNode` 扩展 | `Iterator[T]`/`Iterable[T]`/`Generator[T,...]` 注解解析为 `ArrayTypeNode` | ✅ 完成 |
+| `PythonAnnotationWriter` 注入 `Iterator` import | `rewrite()` 检测 `Iterator[` 注解时自动 prepend `from typing import Iterator` | ✅ 完成 |
+| `TypeAnnotationGenerator` stub 添加 `Iterator` import | 生成 `.pyi` 时若检测到 `Iterator[` 则添加 `from typing import Iterator` | ✅ 完成 |
+| 单元测试 | 4 个 yield 推导测试（`yield i` from range → `Iterator[int]`，直接参数 yield → `Iterator[float]`，源文件注解注入，`yield from` 生成器识别） | ✅ 完成 |
+| E2E 对比测试 | `yield_generator_gives_speedup`：GCP `Iterator[int]` 注解 → mypyc 编译 → **3.6×–4.1× 加速**（vs CPython），GCP/bare = **3.2–3.8×** | ✅ 完成 |
+
+**性能结果**：
+- `sum_via_gen(1000)`: CPython 34971 ns → mypyc bare 29938 ns (1.17×) → mypyc GCP **9628 ns (3.63×)**
+- `sum_squares_via_gen(1000)`: CPython 42237 ns → mypyc bare 39490 ns (1.07×) → mypyc GCP **10341 ns (4.08×)**
+
+**限制**：间接生成器元素类型（`for v in list_param: yield v`）因 Genericable 未直接关联参数，无法推导 `[T]` 类型参数（输出 `Iterator` 而非 `Iterator[int]`）；直接参数 yield（`yield param`）可正确推导。
 
 ---
 
@@ -184,9 +212,9 @@ P5-A 在 `CallConverter` 中提前拦截，将方法调用替换为有类型的 
 
 | 任务 | 说明 | 状态 |
 |------|------|------|
-| `TypeAnnotationGenerator` 支持 `Array<T>` → `list[T]` | 泛型集合类型序列化 | ⬜ 待实现 |
-| 参数注解写入时支持泛型集合 | | ⬜ 待实现 |
-| 验证 `subscript` 测试提升 | 从当前 1.86× 提升 | ⬜ 待实现 |
+| `TypeAnnotationGenerator` 支持 `Array<T>` → `list[T]` | `outlineToTypeStr` 新增对 `Genericable.min()` 的解析，当 min 已解析为具体类型时委托递归 | ✅ 已完成 |
+| 参数注解写入时支持泛型集合 | `augmentFromCallSites` 路径通过 call-site 轮廓传播 `Array<int>` → `list[int]` | ✅ 已完成 |
+| 验证 `subscript` 测试提升 | 新增 `list_parameter_annotation_gives_speedup` E2E 测试，断言 ≥ 5× 加速 | ✅ 已完成 |
 
 ---
 

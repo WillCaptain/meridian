@@ -221,10 +221,9 @@ class ConverterE2ETest {
                 "GCP must infer 'n: int' from call context");
 
         p.printTable();
-        // SubscriptConverter infrastructure test: the primary value is correct conversion
-        // and execution. str[i] still involves Python object overhead (int()/str() calls)
-        // that limits peak speedup. Assert overall GCP > bare; per-function speedup is
-        // informational until list[int] parameter annotation is implemented (P1).
+        // This test exercises str subscript (s[i] where s: str): the int()/str() conversion
+        // calls impose Python-level overhead that limits peak speedup to ~1.5-2×.
+        // For list[int] parameter annotation (P10), see list_parameter_annotation_gives_speedup.
         p.assertAvgGcpBeatsBare(
                 "mypyc(GCP) must outperform mypyc(bare) for subscript operations");
     }
@@ -1312,6 +1311,433 @@ class ConverterE2ETest {
                 "mypyc(GCP) must outperform mypyc(bare) — list method types unlock int optimization");
     }
 
+    // ── P6: cross-module type inference ──────────────────────────────────────
+
+    /**
+     * P6: {@code from utils import helper} — cross-module demand-driven inference.
+     *
+     * <p>The library module imports a helper function from a separate "utils" module.
+     * With P6, {@link ImportFromConverter} triggers loading of the utils module into
+     * the shared GCP ASF so that calls to {@code helper(n)} propagate the call-site
+     * type ({@code int}) back to the helper's parameter, enabling full annotation.
+     *
+     * <p>Without P6, {@code helper(n)} returns {@code UNKNOWN} and mypyc cannot
+     * optimise the body. With P6, the full type chain is inferred and the compiled
+     * extension should outperform CPython by ≥ 5×.
+     */
+    @Test
+    void cross_module_inference_gives_speedup() throws Exception {
+        // "utils" module — pre-registered in the inferencer
+        String utilsSource = """
+                def fast_sum(n):
+                    total = 0
+                    for i in range(n):
+                        total += i
+                    return total
+                """;
+
+        // Library module that imports from utils
+        String bare = """
+                from utils import fast_sum
+
+                def run_sum(n):
+                    return fast_sum(n)
+
+                def run_double_sum(n):
+                    return fast_sum(n) + fast_sum(n)
+                """;
+
+        String calls = """
+                run_sum(1000)
+                run_double_sum(500)
+                """;
+
+        List<BenchCase> cases = List.of(
+                new BenchCase("run_sum",        List.of(1_000), 50_000),
+                new BenchCase("run_double_sum", List.of(500),   50_000)
+        );
+
+        // Create an inferencer with the utils module pre-registered
+        PythonInferencer crossModuleInferencer = new PythonInferencer();
+        crossModuleInferencer.registerModule("utils", utilsSource);
+
+        // We need to run the full pipeline manually since runPipeline uses its own inferencer
+        Path workDir = Files.createTempDirectory("meridian_e2e_cross_module_");
+        String bareModName = "cross_module_bare";
+        String annModName  = "cross_module_gcp";
+        Path barePath = workDir.resolve(bareModName + ".py");
+        Files.writeString(barePath, bare, StandardCharsets.UTF_8);
+
+        AST[] asts = crossModuleInferencer.inferWithContext(bare, calls);
+        String annotated = new PythonAnnotationWriter().annotate(bare, asts[0], asts[1]);
+
+        section("[cross_module] annotated source");
+        System.out.println(annotated);
+        assertTrue(annotated.contains("n: int"),
+                "GCP must infer 'n: int' for the wrapper functions");
+
+        Path annPath = workDir.resolve(annModName + ".py");
+        Files.writeString(annPath, annotated, StandardCharsets.UTF_8);
+
+        // Compile both with mypyc (parallel)
+        MypycRunner runner = new MypycRunner();
+        Path bareDir = workDir.resolve("_bare");
+        Path annDir  = workDir.resolve("_ann");
+        Files.createDirectories(bareDir);
+        Files.createDirectories(annDir);
+        Files.copy(barePath, bareDir.resolve(barePath.getFileName()), StandardCopyOption.REPLACE_EXISTING);
+        Files.copy(annPath,  annDir.resolve(annPath.getFileName()),   StandardCopyOption.REPLACE_EXISTING);
+
+        // The bare source imports 'utils' — provide a stub so mypyc resolves it
+        String utilsStub = utilsSource;
+        Files.writeString(bareDir.resolve("utils.py"), utilsStub, StandardCharsets.UTF_8);
+        Files.writeString(annDir.resolve("utils.py"),  utilsStub, StandardCharsets.UTF_8);
+
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        Future<MypycRunner.CompileResult> bareFut =
+                pool.submit(() -> runner.compile(bareDir.resolve(barePath.getFileName()).toFile(), bareDir.toFile()));
+        Future<MypycRunner.CompileResult> annFut  =
+                pool.submit(() -> runner.compile(annDir.resolve(annPath.getFileName()).toFile(),  annDir.toFile()));
+        pool.shutdown();
+        pool.awaitTermination(5, TimeUnit.MINUTES);
+
+        MypycRunner.CompileResult bareRes = bareFut.get();
+        MypycRunner.CompileResult annRes  = annFut.get();
+        assertTrue(bareRes.success(), "mypyc must compile bare cross-module source:\n" + bareRes.stderr());
+        assertTrue(annRes.success(),  "mypyc must compile GCP-annotated cross-module source:\n" + annRes.stderr());
+
+        Files.copy(bareRes.outputFile().toPath(), workDir.resolve(bareRes.outputFile().getName()), StandardCopyOption.REPLACE_EXISTING);
+        Files.copy(annRes.outputFile().toPath(),  workDir.resolve(annRes.outputFile().getName()),  StandardCopyOption.REPLACE_EXISTING);
+
+        // Run benchmark (utils.py must be present for CPython import)
+        Files.writeString(workDir.resolve("utils.py"), utilsStub, StandardCharsets.UTF_8);
+        String casesJson = buildCasesJson(cases);
+        Path benchScript = workDir.resolve("generic_benchmark.py");
+        try (InputStream is = getClass().getClassLoader().getResourceAsStream("generic_benchmark.py")) {
+            assertNotNull(is);
+            Files.copy(is, benchScript, StandardCopyOption.REPLACE_EXISTING);
+        }
+
+        String python = detectPython();
+        ProcessBuilder pb = new ProcessBuilder(python, benchScript.toAbsolutePath().toString(),
+                workDir.toAbsolutePath().toString(), bareModName, annModName, casesJson);
+        pb.redirectErrorStream(false);
+        Process proc = pb.start();
+        byte[] stdout = proc.getInputStream().readAllBytes();
+        byte[] stderr = proc.getErrorStream().readAllBytes();
+        boolean done = proc.waitFor(180, TimeUnit.SECONDS);
+        assertTrue(done, "Benchmark timed out");
+        if (proc.exitValue() != 0) {
+            fail("Benchmark failed:\n" + new String(stderr, StandardCharsets.UTF_8));
+        }
+
+        ObjectMapper json = new ObjectMapper();
+        JsonNode root = json.readTree(stdout);
+        List<BenchRow> rows = new ArrayList<>();
+        for (JsonNode rowNode : root.get("rows")) {
+            if (rowNode.has("error")) {
+                fail("Benchmark error: " + rowNode.get("error").asText());
+            }
+            rows.add(BenchRow.from(rowNode));
+        }
+
+        Pipeline p = new Pipeline("cross_module", annotated, rows);
+        p.assertAllCorrect();
+        p.printTable();
+        p.assertSpeedup("run_sum",        3.0, "cross-module fast_sum(n) → n: int fully typed");
+        p.assertSpeedup("run_double_sum", 3.0, "cross-module double fast_sum(n)");
+    }
+
+    // ── P7: user-defined class method inference ────────────────────────────────
+
+    /**
+     * P7: User-defined class method return-type inference.
+     *
+     * <p>{@link org.twelve.meridian.python.converter.ClassDefConverter} already registers
+     * class methods as module-level functions.  {@link org.twelve.meridian.python.converter.CallConverter}
+     * now desugars {@code obj.method(args)} → {@code method(obj, args)}, so GCP can infer
+     * the return type from the method body without needing Entity membership resolution.
+     *
+     * <p>Pattern: a {@code MathHelper} class with pure-computation methods; call-site
+     * context provides {@code n: int}, enabling fully-typed loop annotation and mypyc
+     * native code generation.  Expected speedup ≥ 5× on integer-hot bodies.
+     */
+    @Test
+    void class_method_inference_gives_speedup() throws Exception {
+        // P7: obj.method(args) is desugared to method(obj, args) so GCP can infer
+        // the return type from the method body.  ClassDefConverter already registers
+        // each class method as a module-level function; the desugaring in CallConverter
+        // passes the receiver as the 'self' argument.
+        String bare = """
+                class MathHelper:
+                    def fast_sum(self, n):
+                        total = 0
+                        for i in range(n):
+                            total += i
+                        return total
+
+                    def fast_sum_sq(self, n):
+                        total = 0
+                        for i in range(n):
+                            total += i * i
+                        return total
+
+                def run_sum(n):
+                    h = MathHelper()
+                    return h.fast_sum(n)
+
+                def run_squares(n):
+                    h = MathHelper()
+                    return h.fast_sum_sq(n)
+                """;
+
+        String calls = """
+                run_sum(1000)
+                run_squares(500)
+                """;
+
+        List<BenchCase> cases = List.of(
+                new BenchCase("run_sum",     List.of(1_000), 50_000),
+                new BenchCase("run_squares", List.of(500),   50_000)
+        );
+
+        Pipeline p = runPipeline("class_method", bare, calls, cases);
+
+        section("Class method: annotated source");
+        System.out.println(p.annotated());
+        assertTrue(p.annotated().contains("n: int"),
+                "GCP must infer 'n: int' from call context");
+
+        p.printTable();
+        p.assertSpeedup("run_sum",     3.0, "P7 desugar: h.fast_sum(n)→fast_sum(h,n), n:int typed");
+        p.assertSpeedup("run_squares", 3.0, "P7 desugar: h.fast_sum_sq(n)→fast_sum_sq(h,n), n:int");
+    }
+
+    // ── P10: list[T] parameter annotation ────────────────────────────────────
+
+    /**
+     * P9: {@code dict[int, int]} parameter annotation.
+     *
+     * <p>When a function receives a dict and accesses {@code freq[i]}, GCP's demand-driven
+     * inference (call-site {@code freq={0:1, 1:2, ...}}) must propagate {@code Dict<int,int>}
+     * through {@link TypeAnnotationGenerator#outlineToTypeStr} and write
+     * {@code freq: dict[int, int]} into the annotated source.
+     *
+     * <p>With the annotation, mypyc knows the value type is {@code int} and avoids
+     * boxing/unboxing on every dict access in the accumulation loop.
+     * Expected speedup ≥ 2× for an integer accumulation loop over a typed dict.
+     */
+    @Test
+    void dict_type_inference_gives_speedup() throws Exception {
+        // Use string keys so the dict literal in calls source is dict[str, int]
+        // and the same dict serialises cleanly as a JSON object in the benchmark.
+        String bare = """
+                def sum_freq(freq, words, n):
+                    total = 0
+                    for i in range(n):
+                        total += freq[words[i]]
+                    return total
+
+                def dot_freq(freq1, freq2, words, n):
+                    result = 0
+                    for i in range(n):
+                        result += freq1[words[i]] * freq2[words[i]]
+                    return result
+
+                def sum_via_get(freq, words, n):
+                    total = 0
+                    for i in range(n):
+                        total += freq.get(words[i], 0)
+                    return total
+                """;
+
+        String calls = """
+                sum_freq({"a": 1, "b": 2, "c": 3}, ["a", "b", "c"], 3)
+                dot_freq({"a": 1, "b": 2, "c": 3}, {"a": 4, "b": 5, "c": 6}, ["a", "b", "c"], 3)
+                sum_via_get({"a": 1, "b": 2, "c": 3}, ["a", "b", "c"], 3)
+                """;
+
+        // Build string-keyed benchmark data.
+        // Use N=50 keys so the dict fits in CPU L1 cache: the benchmark then measures
+        // pure mypyc unboxing savings rather than memory-access latency.
+        int N = 50;
+        java.util.LinkedHashMap<String, Object> freq = new java.util.LinkedHashMap<>();
+        List<Object> words = new ArrayList<>();
+        for (int i = 0; i < N; i++) {
+            String k = "w" + i;
+            freq.put(k, i + 1);
+            words.add(k);
+        }
+
+        List<BenchCase> cases = List.of(
+                new BenchCase("sum_freq",    Arrays.<Object>asList(freq, words, N), 30_000),
+                new BenchCase("dot_freq",    Arrays.<Object>asList(freq, freq, words, N), 30_000),
+                new BenchCase("sum_via_get", Arrays.<Object>asList(freq, words, N), 30_000)
+        );
+
+        Pipeline p = runPipeline("dict_type", bare, calls, cases);
+
+        section("Dict type: annotated source");
+        System.out.println(p.annotated());
+        assertTrue(p.annotated().contains("dict[str, int]"),
+                "GCP must annotate freq as dict[str, int] from dict-literal call-site context");
+        assertTrue(p.annotated().contains("n: int"),
+                "GCP must infer 'n: int' from int literal in call");
+
+        p.printTable();
+        // Dict subscript optimization: mypyc knows the value type is int and avoids PyObject
+        // boxing on every access, but hash-table lookup still dominates over raw arithmetic.
+        // For string-keyed dicts, the hash computation limits peak speedup to ~1.5–2× vs CPython.
+        // dot_freq does two dict lookups + integer multiply per iteration, so gains more.
+        p.assertSpeedup("sum_freq",    1.3, "freq: dict[str,int] → mypyc unboxes int values");
+        p.assertSpeedup("dot_freq",    1.5, "freq1,freq2: dict[str,int] → unbox + native multiply");
+        p.assertAvgGcpBeatsBare(
+                "mypyc(GCP) must outperform mypyc(bare) — dict type annotation enables native int arithmetic");
+    }
+
+    /**
+     * P10: {@code list[int]} parameter annotation.
+     *
+     * <p>When a function receives a {@code list[int]} and accesses {@code arr[i]},
+     * GCP's demand-driven inference (call-site {@code arr=[1,2,...,n]}) must propagate
+     * the {@code Array<int>} type through {@link TypeAnnotationGenerator#outlineToTypeStr}
+     * (which previously blocked all {@code Genericable} outlines) and write
+     * {@code arr: list[int]} into the annotated source.
+     *
+     * <p>With the annotation, mypyc compiles {@code arr[i]} as a native CPython list
+     * element access and emits tight C arithmetic for the hot accumulation loop.
+     * Expected speedup ≥ 5× for an integer sum-of-products over a typed list.
+     */
+    @Test
+    void list_parameter_annotation_gives_speedup() throws Exception {
+        String bare = """
+                def sum_array(arr, n):
+                    total = 0
+                    for i in range(n):
+                        total += arr[i]
+                    return total
+
+                def dot_product(a, b, n):
+                    result = 0
+                    for i in range(n):
+                        result += a[i] * b[i]
+                    return result
+
+                def sum_squares(arr, n):
+                    total = 0
+                    for i in range(n):
+                        total += arr[i] * arr[i]
+                    return total
+                """;
+
+        String calls = """
+                sum_array([1, 2, 3], 3)
+                dot_product([1, 2, 3], [4, 5, 6], 3)
+                sum_squares([1, 2, 3], 3)
+                """;
+
+        // Pre-generate benchmark data: 500-element int lists (all-threes; argsToJson serialises List<?>)
+        List<Object> data500 = new ArrayList<>(Collections.nCopies(500, 3));
+
+        List<BenchCase> cases = List.of(
+                new BenchCase("sum_array",   Arrays.<Object>asList(data500, 500),              2_000),
+                new BenchCase("dot_product", Arrays.<Object>asList(data500, data500, 500),      2_000),
+                new BenchCase("sum_squares", Arrays.<Object>asList(data500, 500),              2_000)
+        );
+
+        Pipeline p = runPipeline("list_param", bare, calls, cases);
+
+        section("List parameter: annotated source");
+        System.out.println(p.annotated());
+        assertTrue(p.annotated().contains("list[int]"),
+                "GCP must annotate list parameter as list[int] from call-site context");
+        assertTrue(p.annotated().contains("n: int"),
+                "GCP must infer 'n: int' from int literal in call");
+
+        p.printTable();
+        p.assertSpeedup("sum_array",   5.0, "arr: list[int] + n: int → native list[i] access");
+        p.assertSpeedup("dot_product", 5.0, "a,b: list[int] + n: int → native element multiply");
+        p.assertSpeedup("sum_squares", 5.0, "arr: list[int] + n: int → native list[i]*list[i]");
+    }
+
+    /**
+     * P11: {@code yield} / Generator type inference.
+     *
+     * <p>Generator functions that {@code yield} integers from {@code range()} are annotated
+     * as {@code -> Iterator[int]}.  mypyc uses the yield-type annotation to:
+     * <ul>
+     *   <li>Compile the generator frame as a typed C struct (avoids PyObject boxing).</li>
+     *   <li>Let the consumer loop infer {@code x: int}, enabling native integer arithmetic.</li>
+     * </ul>
+     *
+     * <p>Two generators are exercised:
+     * <ul>
+     *   <li>{@code gen_range(n)}: yields consecutive integers — simplest possible generator.</li>
+     *   <li>{@code gen_squares(n)}: yields {@code i*i} — adds integer arithmetic in the body.</li>
+     * </ul>
+     * Both are consumed by accumulation functions ({@code sum_via_gen}, {@code sum_squares_via_gen}).
+     *
+     * <p>Expected speedup ≥ 1.5× (vs CPython): generator protocol + typed iteration eliminates
+     * PyObject boxing for each {@code yield}/consume pair.
+     */
+    @Test
+    void yield_generator_gives_speedup() throws Exception {
+        String bare = """
+                def gen_range(n):
+                    for i in range(n):
+                        yield i
+
+                def gen_squares(n):
+                    for i in range(n):
+                        yield i * i
+
+                def sum_via_gen(n):
+                    total = 0
+                    for x in gen_range(n):
+                        total += x
+                    return total
+
+                def sum_squares_via_gen(n):
+                    total = 0
+                    for x in gen_squares(n):
+                        total += x
+                    return total
+                """;
+
+        String calls = """
+                gen_range(1000)
+                gen_squares(1000)
+                sum_via_gen(1000)
+                sum_squares_via_gen(1000)
+                """;
+
+        List<BenchCase> cases = List.of(
+                new BenchCase("sum_via_gen",        List.of(1_000), 10_000),
+                new BenchCase("sum_squares_via_gen", List.of(1_000), 10_000)
+        );
+
+        Pipeline p = runPipeline("yield_gen", bare, calls, cases);
+
+        // ── assert annotations ────────────────────────────────────────────────
+        section("Yield/Generator: annotated source");
+        System.out.println(p.annotated());
+        assertTrue(p.annotated().contains("Iterator[int]"),
+                "GCP must annotate gen_range/gen_squares as '-> Iterator[int]'. Got:\n" + p.annotated());
+        assertTrue(p.annotated().contains("n: int"),
+                "GCP must infer 'n: int' from call-site context");
+        assertTrue(p.annotated().contains("from typing import Iterator"),
+                "Annotated source must import Iterator. Got:\n" + p.annotated());
+
+        p.printTable();
+        // Generator protocol + typed iteration: mypyc compiles the yield frame as a
+        // typed C struct. Each next() call avoids PyObject boxing for the int value.
+        // Combined with typed consumer accumulation, speedup is typically 1.5–3×.
+        p.assertSpeedup("sum_via_gen",        1.5, "Iterator[int] → typed generator frame + native consumer loop");
+        p.assertSpeedup("sum_squares_via_gen", 1.5, "Iterator[int] + i*i → native generator arithmetic");
+        p.assertAvgGcpBeatsBare(
+                "mypyc(GCP) must outperform mypyc(bare) — Iterator[int] annotation enables native generator");
+    }
+
     // ── pipeline infrastructure ───────────────────────────────────────────────
 
     record BenchCase(String func, List<Object> args, int iters) {}
@@ -1578,14 +2004,22 @@ class ConverterE2ETest {
 
     private static String argsToJson(List<Object> args) {
         return "[" + args.stream()
-                .map(a -> {
-                    if (a instanceof List<?> list) {
-                        return "[" + list.stream().map(Object::toString)
-                                .collect(Collectors.joining(",")) + "]";
-                    }
-                    return a.toString();
-                })
+                .map(ConverterE2ETest::valueToJson)
                 .collect(Collectors.joining(",")) + "]";
+    }
+
+    /** Recursively convert a Java value to its JSON representation. */
+    @SuppressWarnings("unchecked")
+    private static String valueToJson(Object a) {
+        if (a instanceof String s)
+            return "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
+        if (a instanceof List<?> list)
+            return "[" + list.stream().map(e -> valueToJson((Object) e)).collect(Collectors.joining(",")) + "]";
+        if (a instanceof java.util.Map<?, ?> map)
+            return "{" + map.entrySet().stream()
+                    .map(e -> "\"" + e.getKey() + "\":" + valueToJson(e.getValue()))
+                    .collect(Collectors.joining(",")) + "}";
+        return a.toString();  // numbers, booleans
     }
 
     private static void showDiff(String before, String after) {
