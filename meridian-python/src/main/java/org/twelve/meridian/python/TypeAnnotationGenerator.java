@@ -19,6 +19,7 @@ import org.twelve.gcp.outline.Outline;
 import org.twelve.gcp.outline.adt.Array;
 import org.twelve.gcp.outline.adt.Dict;
 import org.twelve.gcp.outline.adt.Option;
+import org.twelve.gcp.outline.adt.Tuple;
 import org.twelve.gcp.outline.builtin.ERROR;
 import org.twelve.gcp.outline.builtin.UNIT;
 import org.twelve.gcp.outline.builtin.UNKNOWN;
@@ -205,6 +206,22 @@ public class TypeAnnotationGenerator {
         // Array and Dict are concrete Python collection types — check them before the
         // Projectable guard below, because DictOrArray (the common parent of Array and Dict)
         // also implements Projectable and would otherwise be filtered out.
+        if (outline instanceof Tuple t) {
+            java.util.Map<Integer, org.twelve.gcp.outline.Outline> structure = t.structure();
+            List<Integer> indices = structure.keySet().stream()
+                    .filter(i -> i >= 0).sorted().toList();
+            if (indices.isEmpty()) return "tuple";
+            List<String> parts = new ArrayList<>();
+            for (Integer i : indices) {
+                String s = outlineToTypeStr(structure.get(i));
+                parts.add(s != null ? s : "Any");
+            }
+            boolean hasAny = parts.contains("Any");
+            String joined = String.join(", ", parts);
+            String result = "tuple[" + joined + "]";
+            // If any element is unresolved, fall back to plain tuple to avoid importing Any
+            return hasAny ? "tuple" : result;
+        }
         if (outline instanceof Array a) {
             String inner = outlineToTypeStr(a.itemOutline());
             return inner != null ? "list[" + inner + "]" : "list";

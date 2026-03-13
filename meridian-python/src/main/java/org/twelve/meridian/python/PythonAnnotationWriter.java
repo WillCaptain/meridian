@@ -191,6 +191,12 @@ public class PythonAnnotationWriter {
                 if (typeStr != null) {
                     return name + ": " + typeStr + " = " + rest;
                 }
+                // Convert module-level lambda assignment to annotated def.
+                // Python syntax does not allow annotating lambda parameters directly
+                // (lambda x: int: x * 2 is invalid), but a def equivalent is mypyc-friendly.
+                // We only convert when GCP has inferred at least one type for this lambda.
+                String converted = tryConvertLambdaToDef(name, rest, nameToType);
+                if (converted != null) return converted;
             }
         }
 
@@ -361,6 +367,50 @@ public class PythonAnnotationWriter {
             }
         }
         return sb.toString();
+    }
+
+    /**
+     * If {@code rest} starts with {@code lambda} and GCP has type information for at least one
+     * of the lambda's parameters or its return type, convert the whole assignment into a
+     * single-line {@code def} so that mypyc can compile it with full type information.
+     *
+     * <p>Example:
+     * <pre>
+     *   square = lambda x: x * x
+     *   →  def square(x: int) -> int: return x * x
+     * </pre>
+     *
+     * @return the converted def line, or {@code null} if conversion is not applicable
+     */
+    private String tryConvertLambdaToDef(String name, String rest,
+                                          Map<String, String> nameToType) {
+        String trimmed = rest.trim();
+        if (!trimmed.startsWith("lambda")) return null;
+        // "lambda" must be followed by whitespace or ':'
+        if (trimmed.length() > 6 && Character.isLetterOrDigit(trimmed.charAt(6))) return null;
+
+        String content = trimmed.substring("lambda".length());
+        // Strip leading space: "x, y: body" or ": body" (no-arg lambda)
+        if (content.startsWith(" ") || content.startsWith("\t")) content = content.substring(1);
+
+        int colonPos = content.indexOf(':');
+        if (colonPos < 0) return null;
+        String argsStr  = content.substring(0, colonPos).trim();
+        String bodyStr  = content.substring(colonPos + 1).trim();
+
+        // Only convert when we have at least one inferred type for this lambda
+        String retType = nameToType.get(name + "#return");
+        boolean hasAnyType = retType != null || nameToType.entrySet().stream()
+                .anyMatch(e -> e.getKey().startsWith(name + "#")
+                        && !e.getKey().equals(name + "#return"));
+        if (!hasAnyType) return null;
+
+        String annotatedArgs = argsStr.isEmpty() ? "" : rewriteArgs(name, argsStr, nameToType);
+        StringBuilder defLine = new StringBuilder("def ")
+                .append(name).append("(").append(annotatedArgs).append(")");
+        if (retType != null) defLine.append(" -> ").append(retType);
+        defLine.append(": return ").append(bodyStr);
+        return defLine.toString();
     }
 
     /** Returns {@code true} when a parameter string already carries a type annotation. */
