@@ -19,6 +19,7 @@ import org.twelve.gcp.outline.Outline;
 import org.twelve.gcp.outline.adt.Array;
 import org.twelve.gcp.outline.adt.Dict;
 import org.twelve.gcp.outline.adt.Option;
+import org.twelve.gcp.outline.builtin.ERROR;
 import org.twelve.gcp.outline.builtin.UNIT;
 import org.twelve.gcp.outline.builtin.UNKNOWN;
 import org.twelve.gcp.outline.primitive.*;
@@ -187,6 +188,7 @@ public class TypeAnnotationGenerator {
     String outlineToTypeStr(Outline outline) {
         if (outline == null) return null;
         if (outline instanceof UNKNOWN || outline instanceof NOTHING) return null;
+        if (outline instanceof ERROR) return null;
         // GCP-internal structural/protocol types: no valid Python representation
         if (outline instanceof Function<?, ?>) return null;
         // A Genericable is a type-variable placeholder.  If its lower-bound constraint (min())

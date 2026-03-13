@@ -188,7 +188,8 @@ public abstract class PyConverter {
             case "Mult" -> BinaryOperator.MULTIPLY;
             case "Div" -> BinaryOperator.DIVIDE;
             case "Mod" -> BinaryOperator.MODULUS;
-            case "FloorDiv" -> BinaryOperator.DIVIDE;
+            case "FloorDiv" -> BinaryOperator.FLOOR_DIVIDE;
+            case "Pow" -> BinaryOperator.POWER;
             case "BitOr" -> BinaryOperator.BITWISE_OR;
             case "BitAnd" -> BinaryOperator.BITWISE_AND;
             case "BitXor" -> BinaryOperator.BITWISE_XOR;

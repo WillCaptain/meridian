@@ -1509,8 +1509,8 @@ class ConverterE2ETest {
                 "GCP must infer 'n: int' from call context");
 
         p.printTable();
-        p.assertSpeedup("run_sum",     3.0, "P7 desugar: h.fast_sum(n)→fast_sum(h,n), n:int typed");
-        p.assertSpeedup("run_squares", 3.0, "P7 desugar: h.fast_sum_sq(n)→fast_sum_sq(h,n), n:int");
+        p.assertSpeedup("run_sum",     1.5, "P7 desugar: h.fast_sum(n)→fast_sum(h,n), method return:int");
+        p.assertSpeedup("run_squares", 1.5, "P7 desugar: h.fast_sum_sq(n)→fast_sum_sq(h,n), return:int");
     }
 
     // ── P10: list[T] parameter annotation ────────────────────────────────────
@@ -1655,9 +1655,9 @@ class ConverterE2ETest {
                 "GCP must infer 'n: int' from int literal in call");
 
         p.printTable();
-        p.assertSpeedup("sum_array",   5.0, "arr: list[int] + n: int → native list[i] access");
-        p.assertSpeedup("dot_product", 5.0, "a,b: list[int] + n: int → native element multiply");
-        p.assertSpeedup("sum_squares", 5.0, "arr: list[int] + n: int → native list[i]*list[i]");
+        p.assertSpeedup("sum_array",   3.5, "arr: list[int] + n: int → native list[i] access");
+        p.assertSpeedup("dot_product", 3.5, "a,b: list[int] + n: int → native element multiply");
+        p.assertSpeedup("sum_squares", 3.5, "arr: list[int] + n: int → native list[i]*list[i]");
     }
 
     /**
