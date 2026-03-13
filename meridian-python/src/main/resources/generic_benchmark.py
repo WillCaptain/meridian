@@ -16,11 +16,13 @@ Usage:
 Output: JSON object to stdout.
 Each row: func, cpython_ns, mypyc_bare_ns, mypyc_gcp_ns,
           speedup_bare (cpython / mypyc_bare),
-          speedup_gcp  (cpython / mypyc_gcp).
+          speedup_gcp  (cpython / mypyc_gcp),
+          cv_gcp_pct   (coefficient of variation % of the 5 GCP timing samples).
 """
 
 import importlib.util
 import json
+import math
 import os
 import sys
 import time
@@ -53,8 +55,11 @@ def _find_so(directory: str, module_prefix: str) -> str | None:
 
 # ── micro-benchmark ────────────────────────────────────────────────────────────
 
-def _bench(fn, args: tuple, iters: int) -> float:
-    """Median ns/call over iters hot iterations (after warm-up)."""
+def _bench(fn, args: tuple, iters: int) -> tuple[float, float]:
+    """Return (median_ns, cv_pct) over iters hot iterations (after warm-up).
+
+    cv_pct = coefficient of variation = stddev/mean * 100 across the 5 samples.
+    """
     warmup = min(iters // 10, 5_000)
     for _ in range(warmup):
         fn(*args)
@@ -66,7 +71,11 @@ def _bench(fn, args: tuple, iters: int) -> float:
             fn(*args)
         samples.append((time.perf_counter() - t0) / chunk * 1e9)
     samples.sort()
-    return samples[2]  # median
+    median = samples[2]
+    mean = sum(samples) / len(samples)
+    variance = sum((s - mean) ** 2 for s in samples) / len(samples)
+    cv_pct = (math.sqrt(variance) / mean * 100) if mean > 0 else 0.0
+    return median, round(cv_pct, 2)
 
 
 # ── main ───────────────────────────────────────────────────────────────────────
@@ -141,9 +150,9 @@ def main():
             rows.append({"func": fn_name, "correct": False, "error": f"execution error: {e}"})
             continue
 
-        cpython_ns = _bench(py_fn,   args, iters)
-        bare_ns    = _bench(bare_fn, args, iters)
-        gcp_ns     = _bench(ann_fn,  args, iters)
+        cpython_ns, cv_cpython = _bench(py_fn,   args, iters)
+        bare_ns,    cv_bare    = _bench(bare_fn, args, iters)
+        gcp_ns,     cv_gcp     = _bench(ann_fn,  args, iters)
 
         rows.append({
             "func":          f"{fn_name}({', '.join(str(a) for a in args)})",
@@ -153,6 +162,9 @@ def main():
             "mypyc_gcp_ns":  round(gcp_ns,     1),
             "speedup_bare":  round(cpython_ns / bare_ns if bare_ns > 0 else 0.0, 2),
             "speedup_gcp":   round(cpython_ns / gcp_ns  if gcp_ns  > 0 else 0.0, 2),
+            "cv_cpython_pct": cv_cpython,
+            "cv_bare_pct":    cv_bare,
+            "cv_gcp_pct":     cv_gcp,
         })
 
     print(json.dumps({"rows": rows}))
