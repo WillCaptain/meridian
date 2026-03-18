@@ -83,37 +83,64 @@ public class PythonAnnotationWriter {
      * @param usageAst       a second AST containing call sites with concrete argument types
      */
     public String annotate(String originalSource, AST libraryAst, AST usageAst) {
-        Map<String, String> nameToType = collectInferredTypes(libraryAst);
+        Map<String, String> nameToHint = new LinkedHashMap<>();
+        Map<String, String> nameToType = collectInferredTypes(libraryAst, nameToHint);
         augmentFromCallSites(nameToType, libraryAst, usageAst);
-        return rewrite(originalSource, nameToType);
+        // Remove hints for params that were resolved by call-site analysis
+        nameToHint.keySet().removeIf(nameToType::containsKey);
+        return rewrite(originalSource, nameToType, nameToHint);
     }
 
     /**
      * Core annotation: apply a pre-built type map (possibly augmented by call-site analysis).
      */
     public String annotate(String originalSource, AST ast, Map<String, String> extraHints) {
-        Map<String, String> nameToType = collectInferredTypes(ast);
+        Map<String, String> nameToHint = new LinkedHashMap<>();
+        Map<String, String> nameToType = collectInferredTypes(ast, nameToHint);
         nameToType.putAll(extraHints);
-        return rewrite(originalSource, nameToType);
+        nameToHint.keySet().removeIf(nameToType::containsKey);
+        return rewrite(originalSource, nameToType, nameToHint);
     }
 
     private String rewrite(String originalSource, Map<String, String> nameToType) {
-        if (nameToType.isEmpty()) return originalSource;
+        return rewrite(originalSource, nameToType, Collections.emptyMap());
+    }
+
+    private String rewrite(String originalSource, Map<String, String> nameToType,
+                            Map<String, String> nameToHint) {
+        if (nameToType.isEmpty() && nameToHint.isEmpty()) return originalSource;
         String[] lines = originalSource.split("\n", -1);
         StringBuilder out = new StringBuilder();
         for (String line : lines) {
-            out.append(rewriteLine(line, nameToType)).append("\n");
+            out.append(rewriteLine(line, nameToType, nameToHint)).append("\n");
         }
         if (!originalSource.endsWith("\n") && out.length() > 0) {
             out.setLength(out.length() - 1);
         }
         String result = out.toString();
-        // Inject Iterator import when needed and not already present as an import statement.
-        // Check for "import Iterator" specifically (not just "Iterator") to avoid a false positive
-        // when the annotation "-> Iterator[int]" was just injected into a function signature.
+        // Inject typing imports when needed and not already present.
+        // Checks are against nameToType values (the source of all injected annotations) rather
+        // than the full result string to avoid false positives on user-written type names.
         boolean needsIterator = nameToType.values().stream().anyMatch(v -> v.contains("Iterator["));
         if (needsIterator && !result.contains("import Iterator")) {
             result = "from typing import Iterator\n" + result;
+        }
+        boolean needsCallable = nameToType.values().stream().anyMatch(v -> v.contains("Callable["));
+        if (needsCallable && !result.contains("import Callable")) {
+            result = "from typing import Callable\n" + result;
+        }
+        boolean needsOptional = nameToType.values().stream().anyMatch(v -> v.contains("Optional["));
+        if (needsOptional && !result.contains("import Optional")) {
+            result = "from typing import Optional\n" + result;
+        }
+        boolean needsUnion = nameToType.values().stream().anyMatch(v -> v.contains("Union["));
+        if (needsUnion && !result.contains("import Union")) {
+            result = "from typing import Union\n" + result;
+        }
+        boolean needsAny = nameToType.values().stream().anyMatch(
+                v -> java.util.regex.Pattern.compile("\\bAny\\b").matcher(v).find());
+        if (needsAny && !result.contains("import Any")) {
+            result = "from typing import Any\n" + result;
         }
         return result;
     }
@@ -121,6 +148,18 @@ public class PythonAnnotationWriter {
     // ── type collection ────────────────────────────────────────────────────────
 
     private Map<String, String> collectInferredTypes(AST ast) {
+        return collectInferredTypes(ast, null);
+    }
+
+    /**
+     * Collects inferred type annotations for all module-level variables and functions.
+     *
+     * @param ast   the fully-inferred GCP AST
+     * @param hints optional map populated with GCP-level hints for parameters whose inferred type
+     *              cannot be expressed as a Python annotation (e.g. anonymous entity). Pass
+     *              {@code null} to skip hint collection.
+     */
+    private Map<String, String> collectInferredTypes(AST ast, Map<String, String> hints) {
         Map<String, String> result = new LinkedHashMap<>();
         for (var stmt : ast.program().body().statements()) {
             if (!(stmt instanceof VariableDeclarator vd)) continue;
@@ -136,7 +175,7 @@ public class PythonAnnotationWriter {
 
                 // Use inferred outline type
                 if (a.rhs() instanceof FunctionNode fn) {
-                    collectFunctionTypes(rawName, fn, result);
+                    collectFunctionTypes(rawName, fn, result, hints);
                 } else {
                     Outline inferred = a.rhs() != null ? a.rhs().outline() : null;
                     String typeStr = typeGen.outlineToTypeStr(inferred);
@@ -148,7 +187,8 @@ public class PythonAnnotationWriter {
     }
 
     private void collectFunctionTypes(String funcName, FunctionNode fn,
-                                      Map<String, String> result) {
+                                      Map<String, String> result,
+                                      Map<String, String> hints) {
         for (Argument arg : typeGen.flattenFunctionArgs(fn)) {
             TypeNode declared = arg.declared();
             if (declared != null) {
@@ -156,9 +196,17 @@ public class PythonAnnotationWriter {
                 String s = typeGen.typeNodeToStr(declared);
                 if (s != null) result.put(funcName + "#" + arg.name(), s);
             } else {
-                // No declared type: use GCP inferred outline type
-                String typeStr = typeGen.outlineToTypeStr(arg.outline());
-                if (typeStr != null) result.put(funcName + "#" + arg.name(), typeStr);
+                // For function parameters, use outlineToTypeStrForParam (skips extendToBe max()
+                // fallback which is set by body inference and is often too broad, e.g. Union[str,float]
+                // for `total += m`). Call-site analysis will fill in concrete types afterwards.
+                String typeStr = typeGen.outlineToTypeStrForParam(arg.outline());
+                if (typeStr != null) {
+                    result.put(funcName + "#" + arg.name(), typeStr);
+                } else if (hints != null) {
+                    // Collect ⚠️ hint for params whose GCP type cannot be expressed as Python annotation
+                    String hint = typeGen.outlineToHint(arg.outline());
+                    if (hint != null) hints.put(funcName + "#" + arg.name(), hint);
+                }
             }
         }
         // Return type
@@ -177,6 +225,11 @@ public class PythonAnnotationWriter {
             "^(\\s*(?:async\\s+)?def\\s+)([A-Za-z_][A-Za-z0-9_]*)\\s*\\((.*)\\)\\s*(?:->\\s*[^:]+)?:\\s*$");
 
     private String rewriteLine(String line, Map<String, String> nameToType) {
+        return rewriteLine(line, nameToType, Collections.emptyMap());
+    }
+
+    private String rewriteLine(String line, Map<String, String> nameToType,
+                                Map<String, String> nameToHint) {
         // Only annotate module-level bare assignments (no leading whitespace).
         // Inside functions, local-variable types are inferred by mypy/mypyc automatically,
         // and injecting annotations for iteration variables causes "name already defined" errors.
@@ -200,24 +253,54 @@ public class PythonAnnotationWriter {
             }
         }
 
-        // Try function def: inject return type if missing
+        // Try function def: inject return type and/or ⚠️ hint comments
         Matcher fm = FUNC_DEF.matcher(line);
         if (fm.matches()) {
             String prefix  = fm.group(1);
             String name    = fm.group(2);
             String args    = fm.group(3);
+            String defLine;
             // Only add -> return if there's no existing one
             if (!line.contains("->")) {
                 String retType = nameToType.get(name + "#return");
                 if (retType != null) {
-                    // Reconstruct: def name(args) -> retType:
-                    return prefix + name + "(" + rewriteArgs(name, args, nameToType) + ") -> " + retType + ":";
+                    defLine = prefix + name + "(" + rewriteArgs(name, args, nameToType) + ") -> " + retType + ":";
+                } else {
+                    defLine = prefix + name + "(" + rewriteArgs(name, args, nameToType) + "):";
                 }
+            } else {
+                defLine = prefix + name + "(" + rewriteArgs(name, args, nameToType) + "):";
             }
-            return prefix + name + "(" + rewriteArgs(name, args, nameToType) + "):";
+            // Append ⚠️ comment for params whose GCP type cannot be expressed as Python annotation
+            List<String> hints = buildHintComment(name, args, nameToType, nameToHint);
+            if (!hints.isEmpty()) {
+                defLine += "  # ⚠️ " + String.join(", ", hints);
+            }
+            return defLine;
         }
 
         return line;
+    }
+
+    /**
+     * Builds the list of hint strings for parameters that have a GCP-level type description but
+     * cannot be expressed as a Python annotation (e.g. anonymous entity). Only includes params
+     * that do NOT already have an annotation in {@code nameToType}.
+     */
+    private List<String> buildHintComment(String funcName, String rawArgs,
+                                          Map<String, String> nameToType,
+                                          Map<String, String> nameToHint) {
+        if (nameToHint.isEmpty()) return Collections.emptyList();
+        List<String> result = new ArrayList<>();
+        for (String paramToken : rawArgs.split(",")) {
+            String paramName = paramToken.trim().replaceAll(":.*", "").trim();
+            if (paramName.isBlank()) continue;
+            // Only hint if param has no Python annotation
+            if (nameToType.containsKey(funcName + "#" + paramName)) continue;
+            String hint = nameToHint.get(funcName + "#" + paramName);
+            if (hint != null) result.add(paramName + ": " + hint);
+        }
+        return result;
     }
 
     // ── demand-driven call-site analysis ─────────────────────────────────────

@@ -87,6 +87,45 @@ class AnnotationWriterTest {
         assertTrue(stub.contains("def add"), "Stub should contain function def");
     }
 
+    // ── Callable (higher-order function) annotation ──────────────────────────
+
+    @Test
+    void annotate_hof_emits_callable_type() throws Exception {
+        String code =
+            "def apply_and_sum(fn, lst, n):\n" +
+            "    total = 0.0\n" +
+            "    for i in range(n):\n" +
+            "        total += fn(lst[i])\n" +
+            "    return total\n" +
+            "\n" +
+            "def apply_and_count_positive(fn, lst, n):\n" +
+            "    count = 0\n" +
+            "    for i in range(n):\n" +
+            "        if fn(lst[i]) > 0.0:\n" +
+            "            count += 1\n" +
+            "    return count\n";
+        String ctx =
+            "data = [1.0, 4.0, 9.0, 16.0, 25.0]\n" +
+            "r1 = apply_and_sum(lambda x: x * 2.0, data, 5)\n" +
+            "r3 = apply_and_count_positive(lambda x: x - 5.0, data, 5)\n";
+
+        AST[] asts = inferencer.inferWithContext(code, ctx);
+        String annotated = new PythonAnnotationWriter().annotate(code, asts[0], asts[1]);
+
+        System.out.println("=== HOF annotated ===\n" + annotated);
+
+        assertTrue(annotated.contains("Callable"),
+                "fn parameter should be annotated as Callable, got:\n" + annotated);
+        assertTrue(annotated.contains("from typing import Callable"),
+                "Should import Callable, got:\n" + annotated);
+        assertTrue(annotated.contains("float"),
+                "Callable types should reference float");
+
+        // Annotated output must remain valid Python
+        assertDoesNotThrow(() -> new PythonAstBridge().parse(annotated),
+                "Annotated HOF source should be valid Python");
+    }
+
     // ── mypyc compilation ─────────────────────────────────────────────────────
 
     @Test

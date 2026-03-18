@@ -64,6 +64,18 @@ public class TypeAnnotationGenerator {
         if (contentStr.contains("Iterator[")) {
             sb.append("from typing import Iterator\n");
         }
+        if (contentStr.contains("Callable[")) {
+            sb.append("from typing import Callable\n");
+        }
+        if (contentStr.contains("Optional[")) {
+            sb.append("from typing import Optional\n");
+        }
+        if (contentStr.contains("Union[")) {
+            sb.append("from typing import Union\n");
+        }
+        if (java.util.regex.Pattern.compile("\\bAny\\b").matcher(contentStr).find()) {
+            sb.append("from typing import Any\n");
+        }
         sb.append("\n").append(contentStr);
         return sb.toString();
     }
@@ -106,13 +118,20 @@ public class TypeAnnotationGenerator {
         sb.append(indent).append("def ").append(name).append("(");
 
         List<Argument> args = flattenFunctionArgs(fn);
+        List<String> paramHints = new ArrayList<>();
         for (int i = 0; i < args.size(); i++) {
             if (i > 0) sb.append(", ");
             Argument a = args.get(i);
             String argName = a.name();   // use .name(), not .lexeme() which includes type annotation
             String argType = resolveType(a.declared(), a.outline());
             sb.append(argName);
-            if (argType != null) sb.append(": ").append(argType);
+            if (argType != null) {
+                sb.append(": ").append(argType);
+            } else {
+                // Collect ⚠️ hint for params whose GCP type cannot be expressed as Python annotation
+                String hint = outlineToHint(a.outline());
+                if (hint != null) paramHints.add(argName + ": " + hint);
+            }
         }
         sb.append(")");
 
@@ -120,7 +139,11 @@ public class TypeAnnotationGenerator {
         String retType = functionReturnType(fn);
         if (retType != null) sb.append(" -> ").append(retType);
 
-        sb.append(": ...\n");
+        sb.append(": ...");
+        if (!paramHints.isEmpty()) {
+            sb.append("  # ⚠️ ").append(String.join(", ", paramHints));
+        }
+        sb.append("\n");
     }
 
     // ── outline / class ────────────────────────────────────────────────────────
@@ -182,6 +205,40 @@ public class TypeAnnotationGenerator {
     }
 
     /**
+     * Returns a GCP-level type description for display/hint purposes, for outlines that
+     * cannot be expressed as a Python type annotation. Returns {@code null} when the
+     * outline is already annotatable (see {@link #outlineToTypeStr}) or when no
+     * meaningful GCP description is available.
+     *
+     * <p>Used to generate {@code # ⚠️} hint comments for parameters whose inferred type
+     * cannot be written as a Python annotation — for example, an anonymous structural
+     * entity inferred from member-access patterns such as {@code person.age}.
+     */
+    String outlineToHint(Outline outline) {
+        if (outline == null) return null;
+        if (outlineToTypeStr(outline) != null) return null; // already annotatable, no hint needed
+        if (outline instanceof Genericable<?, ?> g) {
+            Outline min = g.min();
+            if (!(min instanceof ANY) && !(min instanceof NOTHING) && !(min instanceof UNKNOWN)
+                    && !(min instanceof Genericable)) {
+                if (min instanceof Function) return "Callable";
+                if (min instanceof org.twelve.gcp.outline.adt.Entity e) return entityHint(e);
+            }
+        }
+        if (outline instanceof org.twelve.gcp.outline.adt.Entity e) return entityHint(e);
+        return null;
+    }
+
+    private String entityHint(org.twelve.gcp.outline.adt.Entity e) {
+        List<String> names = e.members().stream()
+                .map(m -> m.name())
+                .filter(n -> n != null && !n.isBlank())
+                .toList();
+        if (names.isEmpty()) return "Entity";
+        return "Entity{" + String.join(", ", names) + "}";
+    }
+
+    /**
      * Convert a GCP inferred {@link Outline} type to its Python type string.
      * Uses {@code instanceof} checks on the GCP type hierarchy rather than
      * fragile class-name matching.
@@ -190,22 +247,78 @@ public class TypeAnnotationGenerator {
         if (outline == null) return null;
         if (outline instanceof UNKNOWN || outline instanceof NOTHING) return null;
         if (outline instanceof ERROR) return null;
-        // GCP-internal structural/protocol types: no valid Python representation
-        if (outline instanceof Function<?, ?>) return null;
-        // A Genericable is a type-variable placeholder.  If its lower-bound constraint (min())
-        // has been resolved to a concrete type (e.g. Array<int> after demand-driven call-site
-        // inference), use that concrete type rather than giving up.
+        // Function outlines → Python Callable[[arg, ...], ret]
+        if (outline instanceof Function<?, ?> f) {
+            return functionOutlineToCallable(f);
+        }
+        // A Genericable is a type-variable placeholder.  Resolve via a three-level priority chain:
+        //   1. min() — strongest lower-bound constraint (hasToBe / definedToBe / declaredToBe)
+        //   2. projectedType() — concrete entity recorded after a successful projectEntity pass
+        //      (e.g. a lambda parameter after call-site projection, even when hasToBe is ANY)
+        //   3. max() — upper bound from the actual assigned value (e.g. x=100 → Integer)
+        //      only used as last resort to avoid emitting over-general types
         if (outline instanceof Genericable<?, ?> g) {
             Outline min = g.min();
             if (!(min instanceof ANY) && !(min instanceof NOTHING) && !(min instanceof UNKNOWN)
                     && !(min instanceof Genericable)) {
                 return outlineToTypeStr(min);
             }
+            // Priority 2: concrete entity from call-site projection
+            Outline projected = g.projectedType();
+            if (projected != null && !(projected instanceof ANY) && !(projected instanceof UNKNOWN)
+                    && !(projected instanceof Genericable)) {
+                return outlineToTypeStr(projected);
+            }
+            // Priority 3: upper bound from actual assigned value (local variable scenario)
+            Outline max = g.max();
+            if (!(max instanceof NOTHING) && !(max instanceof ANY) && !(max instanceof UNKNOWN)
+                    && !(max instanceof Genericable)) {
+                return outlineToTypeStr(max);
+            }
             return null;
         }
-        // Array and Dict are concrete Python collection types — check them before the
-        // Projectable guard below, because DictOrArray (the common parent of Array and Dict)
-        // also implements Projectable and would otherwise be filtered out.
+        // Named user-defined Entity (from a Python class declaration, e.g. `class User:`).
+        // Entity implements Projectable, so this check MUST come before the Projectable guard
+        // below — otherwise ALL entity types would be silently dropped.
+        //
+        // Two sub-cases:
+        //   · Named entity — EntityTypeNodeInference creates the entity with node = EntityTypeNode.
+        //     That EntityTypeNode's parent is an OutlineDefinition whose symbolNode() carries
+        //     the Python class name (e.g. "Pet").  We navigate the parent chain to retrieve it.
+        //   · Anonymous structural entity — created by MemberAccessorInference from a
+        //     definedToBe constraint (e.g. ent.name → Entity({name:…})).  The node is a
+        //     Variable/Identifier, not EntityTypeNode, so no Python class name is available.
+        //     Return null; the parameter is left unannotated (known limitation).
+        if (outline instanceof org.twelve.gcp.outline.adt.Entity e) {
+            org.twelve.gcp.ast.Node entityNode = e.node();
+            if (entityNode instanceof org.twelve.gcp.node.expression.typeable.EntityTypeNode) {
+                org.twelve.gcp.ast.Node parent = entityNode.parent();
+                if (parent instanceof org.twelve.gcp.node.expression.OutlineDefinition od) {
+                    String className = od.symbolNode().lexeme().trim();
+                    if (!className.isBlank()) return className;
+                }
+            }
+            return null;
+        }
+        // The following concrete types all implement Projectable (via SumADT or DictOrArray),
+        // so they MUST be checked before the Projectable guard below — otherwise they would
+        // all be silently filtered out as "GCP runtime protocol" types.
+        //
+        //   · Option  (sum type)  → extends SumADT implements Projectable
+        //   · Tuple / Array / Dict → extend DictOrArray implements Projectable
+        if (outline instanceof Option o) {
+            // Collect all resolvable member types:
+            //   · 1 resolvable member  → Optional[X]
+            //   · 2+ resolvable members → Union[X, Y, …]
+            java.util.List<String> parts = new java.util.ArrayList<>();
+            for (Outline opt : o.options()) {
+                String s = outlineToTypeStr(opt);
+                if (s != null) parts.add(s);
+            }
+            if (parts.isEmpty()) return null;
+            if (parts.size() == 1) return "Optional[" + parts.getFirst() + "]";
+            return "Union[" + String.join(", ", parts) + "]";
+        }
         if (outline instanceof Tuple t) {
             java.util.Map<Integer, org.twelve.gcp.outline.Outline> structure = t.structure();
             List<Integer> indices = structure.keySet().stream()
@@ -214,13 +327,11 @@ public class TypeAnnotationGenerator {
             List<String> parts = new ArrayList<>();
             for (Integer i : indices) {
                 String s = outlineToTypeStr(structure.get(i));
+                // Use "Any" for unresolved elements rather than degrading the whole tuple.
+                // The caller (generate / rewrite) detects "Any" and injects the typing import.
                 parts.add(s != null ? s : "Any");
             }
-            boolean hasAny = parts.contains("Any");
-            String joined = String.join(", ", parts);
-            String result = "tuple[" + joined + "]";
-            // If any element is unresolved, fall back to plain tuple to avoid importing Any
-            return hasAny ? "tuple" : result;
+            return "tuple[" + String.join(", ", parts) + "]";
         }
         if (outline instanceof Array a) {
             String inner = outlineToTypeStr(a.itemOutline());
@@ -232,7 +343,7 @@ public class TypeAnnotationGenerator {
             if (k != null && v != null) return "dict[" + k + ", " + v + "]";
             return "dict";
         }
-        // Projectable outlines (Addable, OperateAble, etc.) are GCP runtime protocols,
+        // Other Projectable outlines (Addable, OperateAble, etc.) are GCP runtime protocols,
         // not Python types — mypyc infers the concrete type from operand types in the body
         if (outline instanceof Projectable) return null;
         if (outline instanceof UNIT) return "None";
@@ -244,20 +355,81 @@ public class TypeAnnotationGenerator {
         if (outline instanceof DOUBLE)  return "float";
         if (outline instanceof NUMBER)  return "float";
         if (outline instanceof STRING)  return "str";
-        if (outline instanceof Option o) {
-            // Option is a sum type (union); collect all non-null member types
-            java.util.List<String> parts = new java.util.ArrayList<>();
-            for (Outline opt : o.options()) {
-                String s = outlineToTypeStr(opt);
-                if (s != null) parts.add(s);
-            }
-            if (parts.isEmpty()) return null;
-            if (parts.size() == 1) return "Optional[" + parts.getFirst() + "]";
-            return "Union[" + String.join(", ", parts) + "]";
-        }
         // Named / user-defined type: use outline's semantic name
         String name = outline.name();
         return (name != null && !name.isBlank()) ? name : null;
+    }
+
+    /**
+     * Like {@link #outlineToTypeStr} but intentionally skips the {@code max()} (extendToBe)
+     * fallback. Used for function parameters where {@code extendToBe} is set by body inference
+     * (e.g., the {@code +} operator sets it to {@code Union[str, float]}) and therefore is
+     * too broad to use as a parameter annotation.
+     *
+     * <p>Parameter annotations should only rely on lower-bound constraints ({@code hasToBe} /
+     * {@code definedToBe} via {@code min()}) or call-site projection ({@code projectedType()}).
+     * If neither is available, call-site analysis will supply the type later.
+     */
+    String outlineToTypeStrForParam(Outline outline) {
+        if (outline == null) return null;
+        if (outline instanceof UNKNOWN || outline instanceof NOTHING) return null;
+        if (outline instanceof ERROR) return null;
+        if (outline instanceof Function<?, ?> f) {
+            return functionOutlineToCallable(f);
+        }
+        if (outline instanceof Genericable<?, ?> g) {
+            Outline min = g.min();
+            // Skip SumADT (Option/Poly) in min(): these come from body-inference operator overloads
+            // (e.g. definedToBe = Option({String, Number}) from `total += m`) and are too broad
+            // to use as parameter annotations. Let call-site analysis supply the concrete type.
+            if (!(min instanceof ANY) && !(min instanceof NOTHING) && !(min instanceof UNKNOWN)
+                    && !(min instanceof Genericable)
+                    && !(min instanceof org.twelve.gcp.outline.adt.SumADT)) {
+                return outlineToTypeStr(min);
+            }
+            Outline projected = g.projectedType();
+            if (projected != null && !(projected instanceof ANY) && !(projected instanceof UNKNOWN)
+                    && !(projected instanceof Genericable)) {
+                return outlineToTypeStr(projected);
+            }
+            return null; // No max() fallback — let call-site analysis fill it in
+        }
+        // Bare SumADT (Option/Poly) outlines for parameters come from body-inference extendToBe.
+        // Leave them unannotated and let call-site analysis supply the concrete type.
+        if (outline instanceof org.twelve.gcp.outline.adt.SumADT) return null;
+        return outlineToTypeStr(outline);
+    }
+
+    /**
+     * Convert a GCP {@link Function} outline (which is curried) to Python's
+     * {@code Callable[[arg1, arg2, ...], ret]} syntax.
+     *
+     * <p>GCP represents multi-parameter functions as curried chains:
+     * {@code fn(a) → fn(b) → fn(c) → body}.  We flatten the chain to collect
+     * all argument types, then emit {@code Callable[[a, b, c], ret]}.
+     *
+     * <p>Returns {@code null} when any argument or the return type cannot be
+     * expressed as a concrete Python type (e.g. still unresolved Genericable).
+     */
+    private String functionOutlineToCallable(Function<?, ?> f) {
+        List<String> argTypes = new ArrayList<>();
+        Function<?, ?> curr = f;
+        while (true) {
+            String argType = outlineToTypeStr(curr.argument());
+            // Use "Any" for unresolved argument types rather than abandoning the whole Callable.
+            // e.g. a HOF parameter whose argument type hasn't been narrowed by call-site inference
+            // becomes Callable[[Any], int] instead of being completely unannotated.
+            // The caller (generate / rewrite) detects "Any" and injects the typing import.
+            argTypes.add(argType != null ? argType : "Any");
+            Outline ret = curr.returns().supposedToBe();
+            if (ret instanceof Function<?, ?> nested) {
+                curr = nested;
+            } else {
+                String retType = outlineToTypeStr(ret);
+                if (retType == null) retType = "Any";
+                return "Callable[[" + String.join(", ", argTypes) + "], " + retType + "]";
+            }
+        }
     }
 
     /** Translate GCP type-annotation lexeme strings to Python names. */
