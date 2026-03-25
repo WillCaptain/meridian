@@ -2,6 +2,8 @@ package org.twelve.meridian.python;
 
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.parallel.Execution;
+import org.junit.jupiter.api.parallel.ExecutionMode;
 import org.twelve.gcp.ast.AST;
 
 import java.io.File;
@@ -12,7 +14,12 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /**
  * Tests for {@link PythonAnnotationWriter} and the mypyc pipeline.
+ *
+ * <p>Tests run sequentially (SAME_THREAD) because all methods share the mutable
+ * {@code static inferencer} field; running them concurrently would cause
+ * {@code ConcurrentModificationException} in {@code ASF.infer()}.
  */
+@Execution(ExecutionMode.SAME_THREAD)
 class AnnotationWriterTest {
 
     private static PythonInferencer inferencer;
@@ -91,23 +98,8 @@ class AnnotationWriterTest {
 
     @Test
     void annotate_hof_emits_callable_type() throws Exception {
-        String code =
-            "def apply_and_sum(fn, lst, n):\n" +
-            "    total = 0.0\n" +
-            "    for i in range(n):\n" +
-            "        total += fn(lst[i])\n" +
-            "    return total\n" +
-            "\n" +
-            "def apply_and_count_positive(fn, lst, n):\n" +
-            "    count = 0\n" +
-            "    for i in range(n):\n" +
-            "        if fn(lst[i]) > 0.0:\n" +
-            "            count += 1\n" +
-            "    return count\n";
-        String ctx =
-            "data = [1.0, 4.0, 9.0, 16.0, 25.0]\n" +
-            "r1 = apply_and_sum(lambda x: x * 2.0, data, 5)\n" +
-            "r3 = apply_and_count_positive(lambda x: x - 5.0, data, 5)\n";
+        String code = TestCodeSamples.HOF_CALLABLE_CODE;
+        String ctx = TestCodeSamples.HOF_CALLABLE_CONTEXT;
 
         AST[] asts = inferencer.inferWithContext(code, ctx);
         String annotated = new PythonAnnotationWriter().annotate(code, asts[0], asts[1]);
