@@ -5,6 +5,7 @@
 ## 实验与结果
 
 - `experiment.md`：GCP Converter E2E 性能实验记录与对比结果。
+- `python-feature-coverage.md`：已转换 Python 语法特性清单（含当前边界）。
 
 ## 设计文档入口
 
