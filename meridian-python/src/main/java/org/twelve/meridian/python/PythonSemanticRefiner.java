@@ -51,7 +51,8 @@ public final class PythonSemanticRefiner {
         Map<String, Map<String, String>> attrBindings = collectAttrMethodBindings(pyAst);
         Map<String, List<String>> classAttrs = collectClassAttrLiterals(pyAst);
 
-        indexImportedFunctionReturns(moduleSources, sourcePath, importAliases, functionReturns);
+        indexImportedFunctionReturns(moduleSources, sourcePath, importAliases,
+                functionReturns, methodReturns, classAttrs);
         indexFunctionReturns(pyAst, functionReturns, methodReturns);
         applyImportAliasesToLocalBinders(importAliases, functionReturns, callReturns);
         resolveSelfAttrDelegation(pyAst, attrBindings, methodReturns, functionReturns, classAttrs);
@@ -547,17 +548,29 @@ public final class PythonSemanticRefiner {
                 callResults.put(var, List.of(callee));
                 return;
             }
-            // Binder previously assigned a callable: y = x()
+            // Binder / import previously recorded a return type for callee.
             List<String> viaBinder = callReturns.get(callee);
+            List<String> deeper = functionReturns.get(callee + "()");
+            if (deeper == null) {
+                for (Map.Entry<String, List<String>> e : functionReturns.entrySet()) {
+                    if (e.getKey().endsWith("." + callee + "()") || e.getKey().equals(callee + "()")) {
+                        deeper = e.getValue();
+                        break;
+                    }
+                }
+            }
             if (viaBinder != null && !viaBinder.isEmpty()) {
                 callResults.put(var, viaBinder);
+                // Factory: func returns callable, func()() yields concrete (imported_call).
+                if (deeper != null && !deeper.isEmpty()) {
+                    callReturns.put(var, deeper);
+                }
                 return;
             }
             List<String> fr = functionReturns.get(callee);
             if (fr != null && !fr.isEmpty()) {
                 callResults.put(var, fr);
             }
-            List<String> deeper = functionReturns.get(callee + "()");
             if (deeper != null) {
                 callReturns.put(var, deeper);
             }
@@ -568,11 +581,18 @@ public final class PythonSemanticRefiner {
             Map<String, Object> recv = PyConverter.mapOf(func, "value");
             if (!"Name".equals(PyConverter.typeOf(recv)) || attr == null) return;
             String recvName = PyConverter.strOf(recv, "id");
+            // imported.A() — seed receiver for method lookup; leave callResults to the
+            // exporter so it can emit qualified mod.Class tokens (not bare Class).
+            if (!attr.isEmpty() && Character.isUpperCase(attr.charAt(0))) {
+                receiverTypes.put(var, attr);
+                return;
+            }
             String className = receiverTypes.get(recvName);
             if (className == null) return;
             String q = className + "." + attr;
             List<String> ret = methodReturns.get(q);
             if (ret == null) ret = functionReturns.get(q);
+            if (ret == null) ret = functionReturns.get(attr);
             if (ret != null && !ret.isEmpty()) {
                 callResults.put(var, ret);
             }
@@ -650,14 +670,33 @@ public final class PythonSemanticRefiner {
             if (!"ClassDef".equals(PyConverter.typeOf(stmt))) continue;
             String cls = PyConverter.strOf(stmt, "name");
             for (Map<String, Object> body : PyConverter.listOf(stmt, "body")) {
-                if (!"Assign".equals(PyConverter.typeOf(body))) continue;
-                Map<String, Object> value = PyConverter.mapOf(body, "value");
-                List<String> types = literalType(value);
-                if (types.isEmpty() || types.equals(List.of("callable"))) continue;
-                for (Map<String, Object> target : PyConverter.listOf(body, "targets")) {
-                    if (!"Name".equals(PyConverter.typeOf(target))) continue;
-                    String attr = PyConverter.strOf(target, "id");
-                    if (attr != null) out.put(cls + "." + attr, types);
+                if ("Assign".equals(PyConverter.typeOf(body))) {
+                    Map<String, Object> value = PyConverter.mapOf(body, "value");
+                    List<String> types = literalType(value);
+                    if (types.isEmpty() || types.equals(List.of("callable"))) continue;
+                    for (Map<String, Object> target : PyConverter.listOf(body, "targets")) {
+                        if (!"Name".equals(PyConverter.typeOf(target))) continue;
+                        String attr = PyConverter.strOf(target, "id");
+                        if (attr != null) out.put(cls + "." + attr, types);
+                    }
+                } else if ("FunctionDef".equals(PyConverter.typeOf(body))
+                        || "AsyncFunctionDef".equals(PyConverter.typeOf(body))) {
+                    // self.attr = literal inside methods (typically __init__)
+                    for (Map<String, Object> mstmt : PyConverter.listOf(body, "body")) {
+                        if (!"Assign".equals(PyConverter.typeOf(mstmt))) continue;
+                        Map<String, Object> value = PyConverter.mapOf(mstmt, "value");
+                        List<String> types = literalType(value);
+                        if (types.isEmpty() || types.equals(List.of("callable"))) continue;
+                        for (Map<String, Object> target : PyConverter.listOf(mstmt, "targets")) {
+                            if (!"Attribute".equals(PyConverter.typeOf(target))) continue;
+                            Map<String, Object> recv = PyConverter.mapOf(target, "value");
+                            if (!"Name".equals(PyConverter.typeOf(recv))) continue;
+                            String recvId = PyConverter.strOf(recv, "id");
+                            if (!"self".equals(recvId) && !"cls".equals(recvId)) continue;
+                            String attr = PyConverter.strOf(target, "attr");
+                            if (attr != null) out.putIfAbsent(cls + "." + attr, types);
+                        }
+                    }
                 }
             }
         }
@@ -745,13 +784,15 @@ public final class PythonSemanticRefiner {
             Map<String, String> moduleSources,
             Path sourcePath,
             Map<String, String> importAliases,
-            Map<String, List<String>> functionReturns) {
+            Map<String, List<String>> functionReturns,
+            Map<String, List<String>> methodReturns,
+            Map<String, List<String>> classAttrs) {
         if (importAliases == null || importAliases.isEmpty()) return;
         Set<String> neededMods = new LinkedHashSet<>();
         for (String qual : importAliases.values()) {
+            neededMods.add(qual);
             int dot = qual.lastIndexOf('.');
             if (dot > 0) neededMods.add(qual.substring(0, dot));
-            else neededMods.add(qual);
         }
         Map<String, String> sources = new LinkedHashMap<>();
         if (moduleSources != null) sources.putAll(moduleSources);
@@ -759,11 +800,17 @@ public final class PythonSemanticRefiner {
             Path dir = sourcePath.getParent();
             for (String mod : neededMods) {
                 if (sources.containsKey(mod)) continue;
-                if (mod.contains(".")) continue; // packages: skip for now unless registry
-                Path py = dir.resolve(mod + ".py");
+                Path py = dir.resolve(mod.replace('.', '/') + ".py");
+                if (!java.nio.file.Files.isRegularFile(py) && mod.contains(".")) {
+                    py = dir.resolve(mod.substring(0, mod.indexOf('.')) + ".py");
+                }
                 if (java.nio.file.Files.isRegularFile(py)) {
                     try {
-                        sources.put(mod, java.nio.file.Files.readString(py));
+                        String text = java.nio.file.Files.readString(py);
+                        sources.put(mod, text);
+                        if (mod.contains(".")) {
+                            sources.putIfAbsent(mod.substring(0, mod.indexOf('.')), text);
+                        }
                     } catch (Exception ignored) {
                         // best-effort
                     }
@@ -772,6 +819,45 @@ public final class PythonSemanticRefiner {
         }
         if (sources.isEmpty()) return;
         PythonAstBridge bridge = new PythonAstBridge();
+        // Also pull modules imported by already-loaded foreign sources (one hop).
+        Set<String> extra = new LinkedHashSet<>();
+        for (String mod : new ArrayList<>(neededMods)) {
+            String src = sources.get(mod);
+            if (src == null) continue;
+            try {
+                Map<String, Object> foreignAst = bridge.parse(src);
+                for (String dep : collectImportAliases(foreignAst).values()) {
+                    if (sources.containsKey(dep)) continue;
+                    extra.add(dep);
+                    int dot = dep.lastIndexOf('.');
+                    if (dot > 0) extra.add(dep.substring(0, dot));
+                }
+            } catch (Exception ignored) {
+                // best-effort
+            }
+        }
+        if (sourcePath != null && sourcePath.getParent() != null) {
+            Path dir = sourcePath.getParent();
+            for (String mod : extra) {
+                if (sources.containsKey(mod)) continue;
+                Path py = dir.resolve(mod.replace('.', '/') + ".py");
+                if (!java.nio.file.Files.isRegularFile(py) && mod.contains(".")) {
+                    py = dir.resolve(mod.substring(0, mod.indexOf('.')) + ".py");
+                }
+                if (java.nio.file.Files.isRegularFile(py)) {
+                    try {
+                        String text = java.nio.file.Files.readString(py);
+                        sources.put(mod, text);
+                        String base = mod.contains(".") ? mod.substring(0, mod.indexOf('.')) : mod;
+                        sources.putIfAbsent(base, text);
+                        neededMods.add(base);
+                        neededMods.add(mod);
+                    } catch (Exception ignored) {
+                        // best-effort
+                    }
+                }
+            }
+        }
         for (String mod : neededMods) {
             String src = sources.get(mod);
             if (src == null) continue;
@@ -785,10 +871,39 @@ public final class PythonSemanticRefiner {
                     functionReturns.putIfAbsent(e.getKey(), e.getValue());
                 }
                 for (Map.Entry<String, List<String>> e : mr.entrySet()) {
+                    methodReturns.putIfAbsent(e.getKey(), e.getValue());
+                    methodReturns.putIfAbsent(mod + "." + e.getKey(), e.getValue());
                     functionReturns.putIfAbsent(mod + "." + e.getKey(), e.getValue());
+                    functionReturns.putIfAbsent(e.getKey(), e.getValue());
                 }
+                if (classAttrs != null) {
+                    for (Map.Entry<String, List<String>> e : collectClassAttrLiterals(foreignAst).entrySet()) {
+                        classAttrs.putIfAbsent(e.getKey(), e.getValue());
+                        classAttrs.putIfAbsent(mod + "." + e.getKey(), e.getValue());
+                    }
+                }
+                // Resolve return self.attr → attr literal types on imported classes.
+                Map<String, Map<String, String>> foreignBindings = collectAttrMethodBindings(foreignAst);
+                resolveSelfAttrDelegation(foreignAst, foreignBindings, methodReturns, functionReturns,
+                        classAttrs != null ? classAttrs : new LinkedHashMap<>());
             } catch (Exception ignored) {
                 // best-effort import refine only
+            }
+        }
+        // Second pass: resolve {@code return other_func} using hop-loaded callees.
+        for (String mod : neededMods) {
+            String src = sources.get(mod);
+            if (src == null) continue;
+            try {
+                Map<String, Object> foreignAst = bridge.parse(src);
+                // Apply this module's import aliases so {@code return return_func} resolves.
+                applyImportAliasesToLocalBinders(
+                        collectImportAliases(foreignAst), functionReturns, new LinkedHashMap<>());
+                for (Map<String, Object> stmt : PyConverter.listOf(foreignAst, "body")) {
+                    resolveReturnedNameReturns(stmt, null, functionReturns, methodReturns);
+                }
+            } catch (Exception ignored) {
+                // best-effort
             }
         }
     }

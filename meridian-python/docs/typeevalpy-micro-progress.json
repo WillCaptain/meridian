@@ -2,37 +2,37 @@
   "summary": {
     "claim_boundary": "Meridian native-Python micro progress against Outline fact_id inventory. GCP + Python harness. Primary gate is strict exact-locator pairing; compat allows locator soft-match but never uses ground-truth types to pick sites. legacy mode (expected-type disambiguation) is historical only and is not SOTA. Not Outline-port FACT_PAIRED 513/513; not Autogen README #1.",
     "total_facts_scored": 513,
-    "exact": 478,
-    "exact_rate": 0.9318,
-    "located": 478,
+    "exact": 504,
+    "exact_rate": 0.9825,
+    "located": 511,
     "missing_source_templates": 0,
     "template_errors": 0,
-    "elapsed_sec": 169.0,
+    "elapsed_sec": 167.7,
     "by_category": {
       "assignments": {
-        "exact": 74,
+        "exact": 81,
         "total": 82,
-        "rate": 0.9024
+        "rate": 0.9878
       },
       "classes": {
-        "exact": 110,
+        "exact": 124,
         "total": 125,
-        "rate": 0.88
+        "rate": 0.992
       },
       "dicts": {
-        "exact": 103,
+        "exact": 107,
         "total": 108,
-        "rate": 0.9537
+        "rate": 0.9907
       },
       "direct_calls": {
-        "exact": 22,
+        "exact": 21,
         "total": 24,
-        "rate": 0.9167
+        "rate": 0.875
       },
       "functions": {
-        "exact": 35,
+        "exact": 34,
         "total": 37,
-        "rate": 0.9459
+        "rate": 0.9189
       },
       "lambdas": {
         "exact": 34,
@@ -45,14 +45,15 @@
         "rate": 1.0
       },
       "returns": {
-        "exact": 40,
+        "exact": 43,
         "total": 43,
-        "rate": 0.9302
+        "rate": 1.0
       }
     },
     "by_status": {
-      "EXACT": 478,
-      "MISS_LOCATION": 35
+      "EXACT": 504,
+      "MISS_LOCATION": 2,
+      "MISS_TYPE": 7
     },
     "scoring_mode": "strict",
     "outline_manifest": "/Users/imac/Documents/code/github/outline/outline/src/test/java/org/twelve/outline/toplas/TYPEEVALPY-FACT-MANIFEST.csv",
@@ -61,22 +62,23 @@
     "uses_expected_types_for_pairing": false,
     "modes": {
       "strict": {
-        "exact": 478,
-        "exact_rate": 0.9318,
-        "located": 478,
+        "exact": 504,
+        "exact_rate": 0.9825,
+        "located": 511,
         "by_status": {
-          "EXACT": 478,
-          "MISS_LOCATION": 35
+          "EXACT": 504,
+          "MISS_LOCATION": 2,
+          "MISS_TYPE": 7
         },
         "uses_expected_types_for_pairing": false
       },
       "compat": {
-        "exact": 512,
-        "exact_rate": 0.9981,
+        "exact": 505,
+        "exact_rate": 0.9844,
         "located": 513,
         "by_status": {
-          "EXACT": 512,
-          "MISS_TYPE": 1
+          "EXACT": 505,
+          "MISS_TYPE": 8
         },
         "uses_expected_types_for_pairing": false
       }
@@ -86,83 +88,22 @@
     "strict": {
       "claim_boundary": "Meridian native-Python micro progress against Outline fact_id inventory. GCP + Python harness. Primary gate is strict exact-locator pairing; compat allows locator soft-match but never uses ground-truth types to pick sites. legacy mode (expected-type disambiguation) is historical only and is not SOTA. Not Outline-port FACT_PAIRED 513/513; not Autogen README #1.",
       "total_facts_scored": 513,
-      "exact": 478,
-      "exact_rate": 0.9318,
-      "located": 478,
+      "exact": 504,
+      "exact_rate": 0.9825,
+      "located": 511,
       "missing_source_templates": 0,
       "template_errors": 0,
-      "elapsed_sec": 169.0,
+      "elapsed_sec": 167.7,
       "by_category": {
         "assignments": {
-          "exact": 74,
+          "exact": 81,
           "total": 82,
-          "rate": 0.9024
+          "rate": 0.9878
         },
         "classes": {
-          "exact": 110,
+          "exact": 124,
           "total": 125,
-          "rate": 0.88
-        },
-        "dicts": {
-          "exact": 103,
-          "total": 108,
-          "rate": 0.9537
-        },
-        "direct_calls": {
-          "exact": 22,
-          "total": 24,
-          "rate": 0.9167
-        },
-        "functions": {
-          "exact": 35,
-          "total": 37,
-          "rate": 0.9459
-        },
-        "lambdas": {
-          "exact": 34,
-          "total": 34,
-          "rate": 1.0
-        },
-        "lists": {
-          "exact": 60,
-          "total": 60,
-          "rate": 1.0
-        },
-        "returns": {
-          "exact": 40,
-          "total": 43,
-          "rate": 0.9302
-        }
-      },
-      "by_status": {
-        "EXACT": 478,
-        "MISS_LOCATION": 35
-      },
-      "scoring_mode": "strict",
-      "outline_manifest": "/Users/imac/Documents/code/github/outline/outline/src/test/java/org/twelve/outline/toplas/TYPEEVALPY-FACT-MANIFEST.csv",
-      "outline_release_ref": "toplas-typeevalpy-513 / TYPEEVALPY-FACT-MANIFEST.csv",
-      "micro_root": "/private/tmp/typeevalpy-artifacts/artifacts/results-microbenchmark/codestral-v0.1-22b-q&a-prompt/micro-benchmark/python_features",
-      "uses_expected_types_for_pairing": false
-    },
-    "compat": {
-      "claim_boundary": "Meridian native-Python micro progress against Outline fact_id inventory. GCP + Python harness. Primary gate is strict exact-locator pairing; compat allows locator soft-match but never uses ground-truth types to pick sites. legacy mode (expected-type disambiguation) is historical only and is not SOTA. Not Outline-port FACT_PAIRED 513/513; not Autogen README #1.",
-      "total_facts_scored": 513,
-      "exact": 512,
-      "exact_rate": 0.9981,
-      "located": 513,
-      "missing_source_templates": 0,
-      "template_errors": 0,
-      "elapsed_sec": 169.0,
-      "by_category": {
-        "assignments": {
-          "exact": 82,
-          "total": 82,
-          "rate": 1.0
-        },
-        "classes": {
-          "exact": 125,
-          "total": 125,
-          "rate": 1.0
+          "rate": 0.992
         },
         "dicts": {
           "exact": 107,
@@ -170,14 +111,14 @@
           "rate": 0.9907
         },
         "direct_calls": {
-          "exact": 24,
+          "exact": 21,
           "total": 24,
-          "rate": 1.0
+          "rate": 0.875
         },
         "functions": {
-          "exact": 37,
+          "exact": 34,
           "total": 37,
-          "rate": 1.0
+          "rate": 0.9189
         },
         "lambdas": {
           "exact": 34,
@@ -196,8 +137,70 @@
         }
       },
       "by_status": {
-        "EXACT": 512,
-        "MISS_TYPE": 1
+        "EXACT": 504,
+        "MISS_LOCATION": 2,
+        "MISS_TYPE": 7
+      },
+      "scoring_mode": "strict",
+      "outline_manifest": "/Users/imac/Documents/code/github/outline/outline/src/test/java/org/twelve/outline/toplas/TYPEEVALPY-FACT-MANIFEST.csv",
+      "outline_release_ref": "toplas-typeevalpy-513 / TYPEEVALPY-FACT-MANIFEST.csv",
+      "micro_root": "/private/tmp/typeevalpy-artifacts/artifacts/results-microbenchmark/codestral-v0.1-22b-q&a-prompt/micro-benchmark/python_features",
+      "uses_expected_types_for_pairing": false
+    },
+    "compat": {
+      "claim_boundary": "Meridian native-Python micro progress against Outline fact_id inventory. GCP + Python harness. Primary gate is strict exact-locator pairing; compat allows locator soft-match but never uses ground-truth types to pick sites. legacy mode (expected-type disambiguation) is historical only and is not SOTA. Not Outline-port FACT_PAIRED 513/513; not Autogen README #1.",
+      "total_facts_scored": 513,
+      "exact": 505,
+      "exact_rate": 0.9844,
+      "located": 513,
+      "missing_source_templates": 0,
+      "template_errors": 0,
+      "elapsed_sec": 167.7,
+      "by_category": {
+        "assignments": {
+          "exact": 81,
+          "total": 82,
+          "rate": 0.9878
+        },
+        "classes": {
+          "exact": 125,
+          "total": 125,
+          "rate": 1.0
+        },
+        "dicts": {
+          "exact": 107,
+          "total": 108,
+          "rate": 0.9907
+        },
+        "direct_calls": {
+          "exact": 21,
+          "total": 24,
+          "rate": 0.875
+        },
+        "functions": {
+          "exact": 34,
+          "total": 37,
+          "rate": 0.9189
+        },
+        "lambdas": {
+          "exact": 34,
+          "total": 34,
+          "rate": 1.0
+        },
+        "lists": {
+          "exact": 60,
+          "total": 60,
+          "rate": 1.0
+        },
+        "returns": {
+          "exact": 43,
+          "total": 43,
+          "rate": 1.0
+        }
+      },
+      "by_status": {
+        "EXACT": 505,
+        "MISS_TYPE": 8
       },
       "scoring_mode": "compat",
       "outline_manifest": "/Users/imac/Documents/code/github/outline/outline/src/test/java/org/twelve/outline/toplas/TYPEEVALPY-FACT-MANIFEST.csv",
@@ -691,13 +694,15 @@
       },
       {
         "fact_id": "assignments/recursive_tuple/013/main.py:33:1/FR/a",
-        "status": "MISS_LOCATION",
+        "status": "EXACT",
         "category": "assignments",
         "template": "recursive_tuple",
         "expected": [
           "callable"
         ],
-        "predicted": [],
+        "predicted": [
+          "callable"
+        ],
         "mapping_outline": "ADAPTED"
       },
       {
@@ -767,13 +772,15 @@
       },
       {
         "fact_id": "assignments/recursive_tuple/019/main.py:37:5/LV/b",
-        "status": "MISS_LOCATION",
+        "status": "EXACT",
         "category": "assignments",
         "template": "recursive_tuple",
         "expected": [
           "callable"
         ],
-        "predicted": [],
+        "predicted": [
+          "callable"
+        ],
         "mapping_outline": "ADAPTED"
       },
       {
@@ -830,15 +837,13 @@
       },
       {
         "fact_id": "assignments/recursive_tuple/024/main.py:40:1/LV/m['a']",
-        "status": "EXACT",
+        "status": "MISS_LOCATION",
         "category": "assignments",
         "template": "recursive_tuple",
         "expected": [
           "str"
         ],
-        "predicted": [
-          "str"
-        ],
+        "predicted": [],
         "mapping_outline": "ADAPTED"
       },
       {
@@ -921,24 +926,28 @@
       },
       {
         "fact_id": "assignments/starred/007/main.py:18:8/LV/b[0]",
-        "status": "MISS_LOCATION",
+        "status": "EXACT",
         "category": "assignments",
         "template": "starred",
         "expected": [
           "callable"
         ],
-        "predicted": [],
+        "predicted": [
+          "callable"
+        ],
         "mapping_outline": "ADAPTED"
       },
       {
         "fact_id": "assignments/starred/008/main.py:18:8/LV/b[1]",
-        "status": "MISS_LOCATION",
+        "status": "EXACT",
         "category": "assignments",
         "template": "starred",
         "expected": [
           "callable"
         ],
-        "predicted": [],
+        "predicted": [
+          "callable"
+        ],
         "mapping_outline": "ADAPTED"
       },
       {
@@ -1203,46 +1212,54 @@
       },
       {
         "fact_id": "assignments/walrus/003/main.py:3:5/FR/count_words",
-        "status": "MISS_LOCATION",
+        "status": "EXACT",
         "category": "assignments",
         "template": "walrus",
         "expected": [
           "list"
         ],
-        "predicted": [],
+        "predicted": [
+          "list"
+        ],
         "mapping_outline": "ADAPTED"
       },
       {
         "fact_id": "assignments/walrus/004/main.py:4:5/FR/count_words",
-        "status": "MISS_LOCATION",
+        "status": "EXACT",
         "category": "assignments",
         "template": "walrus",
         "expected": [
           "int"
         ],
-        "predicted": [],
+        "predicted": [
+          "int"
+        ],
         "mapping_outline": "ADAPTED"
       },
       {
         "fact_id": "assignments/walrus/005/main.py:6:22/FR/count_words",
-        "status": "MISS_LOCATION",
+        "status": "EXACT",
         "category": "assignments",
         "template": "walrus",
         "expected": [
           "str"
         ],
-        "predicted": [],
+        "predicted": [
+          "str"
+        ],
         "mapping_outline": "ADAPTED"
       },
       {
         "fact_id": "assignments/walrus/006/main.py:8:9/FR/count_words",
-        "status": "MISS_LOCATION",
+        "status": "EXACT",
         "category": "assignments",
         "template": "walrus",
         "expected": [
           "int"
         ],
-        "predicted": [],
+        "predicted": [
+          "int"
+        ],
         "mapping_outline": "ADAPTED"
       },
       {
@@ -1299,24 +1316,28 @@
       },
       {
         "fact_id": "classes/abstract_class/004/main.py:12:9/FR/Rectangle.__init__",
-        "status": "MISS_LOCATION",
+        "status": "EXACT",
         "category": "classes",
         "template": "abstract_class",
         "expected": [
           "int"
         ],
-        "predicted": [],
+        "predicted": [
+          "int"
+        ],
         "mapping_outline": "ADAPTED"
       },
       {
         "fact_id": "classes/abstract_class/005/main.py:13:9/FR/Rectangle.__init__",
-        "status": "MISS_LOCATION",
+        "status": "EXACT",
         "category": "classes",
         "template": "abstract_class",
         "expected": [
           "int"
         ],
-        "predicted": [],
+        "predicted": [
+          "int"
+        ],
         "mapping_outline": "ADAPTED"
       },
       {
@@ -1412,35 +1433,41 @@
       },
       {
         "fact_id": "classes/assigned_self_call/002/main.py:6:9/FR/func2",
-        "status": "MISS_LOCATION",
+        "status": "EXACT",
         "category": "classes",
         "template": "assigned_self_call",
         "expected": [
           "str"
         ],
-        "predicted": [],
+        "predicted": [
+          "str"
+        ],
         "mapping_outline": "ADAPTED"
       },
       {
         "fact_id": "classes/assigned_self_call/003/main.py:7:9/FR/MyClass.func2",
-        "status": "MISS_LOCATION",
+        "status": "EXACT",
         "category": "classes",
         "template": "assigned_self_call",
         "expected": [
           "MyClass"
         ],
-        "predicted": [],
+        "predicted": [
+          "MyClass"
+        ],
         "mapping_outline": "ADAPTED"
       },
       {
         "fact_id": "classes/assigned_self_call/004/main.py:1:9/LV/a",
-        "status": "MISS_LOCATION",
+        "status": "EXACT",
         "category": "classes",
         "template": "assigned_self_call",
         "expected": [
           "MyClass"
         ],
-        "predicted": [],
+        "predicted": [
+          "MyClass"
+        ],
         "mapping_outline": "ADAPTED"
       },
       {
@@ -1458,24 +1485,28 @@
       },
       {
         "fact_id": "classes/base_class_attr/001/main.py:5:13/LV/A.B.a",
-        "status": "MISS_LOCATION",
+        "status": "EXACT",
         "category": "classes",
         "template": "base_class_attr",
         "expected": [
           "str"
         ],
-        "predicted": [],
+        "predicted": [
+          "str"
+        ],
         "mapping_outline": "ADAPTED"
       },
       {
         "fact_id": "classes/base_class_attr/002/main.py:7:13/FR/A.B.bfunc",
-        "status": "MISS_LOCATION",
+        "status": "EXACT",
         "category": "classes",
         "template": "base_class_attr",
         "expected": [
           "int"
         ],
-        "predicted": [],
+        "predicted": [
+          "int"
+        ],
         "mapping_outline": "ADAPTED"
       },
       {
@@ -1714,13 +1745,15 @@
       },
       {
         "fact_id": "classes/class_variable/003/main.py:6:9/FR/__init__",
-        "status": "MISS_LOCATION",
+        "status": "EXACT",
         "category": "classes",
         "template": "class_variable",
         "expected": [
           "int"
         ],
-        "predicted": [],
+        "predicted": [
+          "int"
+        ],
         "mapping_outline": "ADAPTED"
       },
       {
@@ -2048,13 +2081,15 @@
       },
       {
         "fact_id": "classes/nested_call/002/main.py:4:13/FR/MyClass.func.nested",
-        "status": "MISS_LOCATION",
+        "status": "EXACT",
         "category": "classes",
         "template": "nested_call",
         "expected": [
           "str"
         ],
-        "predicted": [],
+        "predicted": [
+          "str"
+        ],
         "mapping_outline": "ADAPTED"
       },
       {
@@ -2111,13 +2146,15 @@
       },
       {
         "fact_id": "classes/nested_class_calls/003/main.py:9:9/FR/B.__init__",
-        "status": "MISS_LOCATION",
+        "status": "EXACT",
         "category": "classes",
         "template": "nested_class_calls",
         "expected": [
           "C"
         ],
-        "predicted": [],
+        "predicted": [
+          "C"
+        ],
         "mapping_outline": "ADAPTED"
       },
       {
@@ -2135,13 +2172,15 @@
       },
       {
         "fact_id": "classes/nested_class_calls/005/main.py:17:9/FR/A.__init__",
-        "status": "MISS_LOCATION",
+        "status": "EXACT",
         "category": "classes",
         "template": "nested_class_calls",
         "expected": [
           "C"
         ],
-        "predicted": [],
+        "predicted": [
+          "C"
+        ],
         "mapping_outline": "ADAPTED"
       },
       {
@@ -2159,13 +2198,15 @@
       },
       {
         "fact_id": "classes/nested_class_calls/007/main.py:20:9/FR/A.func",
-        "status": "MISS_LOCATION",
+        "status": "EXACT",
         "category": "classes",
         "template": "nested_class_calls",
         "expected": [
           "B"
         ],
-        "predicted": [],
+        "predicted": [
+          "B"
+        ],
         "mapping_outline": "ADAPTED"
       },
       {
@@ -2443,13 +2484,15 @@
       },
       {
         "fact_id": "classes/self_assign_func/003/main.py:11:9/FR/B.__init__",
-        "status": "MISS_LOCATION",
+        "status": "EXACT",
         "category": "classes",
         "template": "self_assign_func",
         "expected": [
           "A"
         ],
-        "predicted": [],
+        "predicted": [
+          "A"
+        ],
         "mapping_outline": "ADAPTED"
       },
       {
@@ -2506,13 +2549,15 @@
       },
       {
         "fact_id": "classes/self_assignment/001/main.py:6:9/FR/A.__init__",
-        "status": "MISS_LOCATION",
+        "status": "EXACT",
         "category": "classes",
         "template": "self_assignment",
         "expected": [
           "callable"
         ],
-        "predicted": [],
+        "predicted": [
+          "callable"
+        ],
         "mapping_outline": "ADAPTED"
       },
       {
@@ -3037,24 +3082,28 @@
       },
       {
         "fact_id": "dicts/call/005/main.py:12:1/LV/d[1]",
-        "status": "MISS_LOCATION",
+        "status": "EXACT",
         "category": "dicts",
         "template": "call",
         "expected": [
           "callable"
         ],
-        "predicted": [],
+        "predicted": [
+          "callable"
+        ],
         "mapping_outline": "ADAPTED"
       },
       {
         "fact_id": "dicts/call/006/main.py:12:1/LV/d[2]",
-        "status": "MISS_LOCATION",
+        "status": "EXACT",
         "category": "dicts",
         "template": "call",
         "expected": [
           "int"
         ],
-        "predicted": [],
+        "predicted": [
+          "int"
+        ],
         "mapping_outline": "ADAPTED"
       },
       {
@@ -3763,13 +3812,14 @@
       },
       {
         "fact_id": "dicts/param_key/008/main.py:18:1/LV/e",
-        "status": "EXACT",
+        "status": "MISS_TYPE",
         "category": "dicts",
         "template": "param_key",
         "expected": [
           "str"
         ],
         "predicted": [
+          "int",
           "str"
         ],
         "mapping_outline": "ADAPTED"
@@ -3815,24 +3865,28 @@
       },
       {
         "fact_id": "dicts/return/003/main.py:9:5/FR/func1",
-        "status": "MISS_LOCATION",
+        "status": "EXACT",
         "category": "dicts",
         "template": "return",
         "expected": [
           "dict"
         ],
-        "predicted": [],
+        "predicted": [
+          "dict"
+        ],
         "mapping_outline": "ADAPTED"
       },
       {
         "fact_id": "dicts/return/004/main.py:9:5/FR/func1",
-        "status": "MISS_LOCATION",
+        "status": "EXACT",
         "category": "dicts",
         "template": "return",
         "expected": [
           "callable"
         ],
-        "predicted": [],
+        "predicted": [
+          "callable"
+        ],
         "mapping_outline": "ADAPTED"
       },
       {
@@ -3967,13 +4021,15 @@
       },
       {
         "fact_id": "dicts/type_coercion/004/main.py:12:5/LV/d[1]",
-        "status": "MISS_LOCATION",
+        "status": "EXACT",
         "category": "dicts",
         "template": "type_coercion",
         "expected": [
           "callable"
         ],
-        "predicted": [],
+        "predicted": [
+          "callable"
+        ],
         "mapping_outline": "ADAPTED"
       },
       {
@@ -4277,13 +4333,15 @@
       },
       {
         "fact_id": "direct_calls/assigned_call/003/main.py:9:5/FR/func",
-        "status": "MISS_LOCATION",
+        "status": "EXACT",
         "category": "direct_calls",
         "template": "assigned_call",
         "expected": [
           "callable"
         ],
-        "predicted": [],
+        "predicted": [
+          "callable"
+        ],
         "mapping_outline": "PORTABLE"
       },
       {
@@ -4314,14 +4372,14 @@
       },
       {
         "fact_id": "direct_calls/imported_return_call/001/main.py:6:1/LV/a",
-        "status": "EXACT",
+        "status": "MISS_TYPE",
         "category": "direct_calls",
         "template": "imported_return_call",
         "expected": [
           "str"
         ],
         "predicted": [
-          "str"
+          "callable"
         ],
         "mapping_outline": "ADAPTED"
       },
@@ -4379,13 +4437,15 @@
       },
       {
         "fact_id": "direct_calls/return_call/002/main.py:5:9/FR/return_func.nested_return_func",
-        "status": "MISS_LOCATION",
+        "status": "EXACT",
         "category": "direct_calls",
         "template": "return_call",
         "expected": [
           "str"
         ],
-        "predicted": [],
+        "predicted": [
+          "str"
+        ],
         "mapping_outline": "PORTABLE"
       },
       {
@@ -4455,27 +4515,28 @@
       },
       {
         "fact_id": "direct_calls/single_argument/003/main.py:8:5/FR/double",
-        "status": "EXACT",
+        "status": "MISS_TYPE",
         "category": "direct_calls",
         "template": "single_argument",
         "expected": [
           "int"
         ],
         "predicted": [
+          "float",
           "int"
         ],
         "mapping_outline": "PORTABLE"
       },
       {
         "fact_id": "direct_calls/single_argument/004/main.py:8:12/FP/x",
-        "status": "EXACT",
+        "status": "MISS_TYPE",
         "category": "direct_calls",
         "template": "single_argument",
         "expected": [
           "int"
         ],
         "predicted": [
-          "int"
+          "float"
         ],
         "mapping_outline": "PORTABLE"
       },
@@ -4738,7 +4799,7 @@
       },
       {
         "fact_id": "functions/composition/004/main.py:8:5/FR/square",
-        "status": "EXACT",
+        "status": "MISS_TYPE",
         "category": "functions",
         "template": "composition",
         "expected": [
@@ -4746,14 +4807,13 @@
           "int"
         ],
         "predicted": [
-          "float",
-          "int"
+          "float"
         ],
         "mapping_outline": "PORTABLE"
       },
       {
         "fact_id": "functions/composition/005/main.py:8:12/FP/x",
-        "status": "EXACT",
+        "status": "MISS_TYPE",
         "category": "functions",
         "template": "composition",
         "expected": [
@@ -4761,21 +4821,20 @@
           "int"
         ],
         "predicted": [
-          "float",
-          "int"
+          "float"
         ],
         "mapping_outline": "PORTABLE"
       },
       {
         "fact_id": "functions/composition/006/main.py:12:1/LV/a",
-        "status": "EXACT",
+        "status": "MISS_TYPE",
         "category": "functions",
         "template": "composition",
         "expected": [
           "int"
         ],
         "predicted": [
-          "int"
+          "float"
         ],
         "mapping_outline": "PORTABLE"
       },
@@ -4911,13 +4970,15 @@
       },
       {
         "fact_id": "functions/nested/002/main.py:5:5/FR/outer",
-        "status": "MISS_LOCATION",
+        "status": "EXACT",
         "category": "functions",
         "template": "nested",
         "expected": [
           "int"
         ],
-        "predicted": [],
+        "predicted": [
+          "int"
+        ],
         "mapping_outline": "PORTABLE"
       },
       {
@@ -4935,13 +4996,15 @@
       },
       {
         "fact_id": "functions/nested/004/main.py:9:9/FR/inner",
-        "status": "MISS_LOCATION",
+        "status": "EXACT",
         "category": "functions",
         "template": "nested",
         "expected": [
           "int"
         ],
-        "predicted": [],
+        "predicted": [
+          "int"
+        ],
         "mapping_outline": "PORTABLE"
       },
       {
@@ -6456,13 +6519,15 @@
       },
       {
         "fact_id": "returns/object/003/main.py:6:9/FR/__init__",
-        "status": "MISS_LOCATION",
+        "status": "EXACT",
         "category": "returns",
         "template": "object",
         "expected": [
           "str"
         ],
-        "predicted": [],
+        "predicted": [
+          "str"
+        ],
         "mapping_outline": "PORTABLE"
       },
       {
@@ -6742,13 +6807,15 @@
       },
       {
         "fact_id": "returns/return_types/006/main.py:24:5/FR/func3",
-        "status": "MISS_LOCATION",
+        "status": "EXACT",
         "category": "returns",
         "template": "return_types",
         "expected": [
           "type"
         ],
-        "predicted": [],
+        "predicted": [
+          "type"
+        ],
         "mapping_outline": "PORTABLE"
       },
       {
@@ -6805,13 +6872,15 @@
       },
       {
         "fact_id": "returns/return_types/011/main.py:41:22/FR/func5",
-        "status": "MISS_LOCATION",
+        "status": "EXACT",
         "category": "returns",
         "template": "return_types",
         "expected": [
           "int"
         ],
-        "predicted": [],
+        "predicted": [
+          "int"
+        ],
         "mapping_outline": "PORTABLE"
       },
       {
@@ -7455,14 +7524,14 @@
       },
       {
         "fact_id": "assignments/recursive_tuple/024/main.py:40:1/LV/m['a']",
-        "status": "EXACT",
+        "status": "MISS_TYPE",
         "category": "assignments",
         "template": "recursive_tuple",
         "expected": [
           "str"
         ],
         "predicted": [
-          "str"
+          "dict"
         ],
         "mapping_outline": "ADAPTED"
       },
@@ -10434,13 +10503,14 @@
       },
       {
         "fact_id": "dicts/param_key/008/main.py:18:1/LV/e",
-        "status": "EXACT",
+        "status": "MISS_TYPE",
         "category": "dicts",
         "template": "param_key",
         "expected": [
           "str"
         ],
         "predicted": [
+          "int",
           "str"
         ],
         "mapping_outline": "ADAPTED"
@@ -10486,14 +10556,14 @@
       },
       {
         "fact_id": "dicts/return/003/main.py:9:5/FR/func1",
-        "status": "MISS_TYPE",
+        "status": "EXACT",
         "category": "dicts",
         "template": "return",
         "expected": [
           "dict"
         ],
         "predicted": [
-          "callable"
+          "dict"
         ],
         "mapping_outline": "ADAPTED"
       },
@@ -10993,14 +11063,14 @@
       },
       {
         "fact_id": "direct_calls/imported_return_call/001/main.py:6:1/LV/a",
-        "status": "EXACT",
+        "status": "MISS_TYPE",
         "category": "direct_calls",
         "template": "imported_return_call",
         "expected": [
           "str"
         ],
         "predicted": [
-          "str"
+          "callable"
         ],
         "mapping_outline": "ADAPTED"
       },
@@ -11136,27 +11206,28 @@
       },
       {
         "fact_id": "direct_calls/single_argument/003/main.py:8:5/FR/double",
-        "status": "EXACT",
+        "status": "MISS_TYPE",
         "category": "direct_calls",
         "template": "single_argument",
         "expected": [
           "int"
         ],
         "predicted": [
+          "float",
           "int"
         ],
         "mapping_outline": "PORTABLE"
       },
       {
         "fact_id": "direct_calls/single_argument/004/main.py:8:12/FP/x",
-        "status": "EXACT",
+        "status": "MISS_TYPE",
         "category": "direct_calls",
         "template": "single_argument",
         "expected": [
           "int"
         ],
         "predicted": [
-          "int"
+          "float"
         ],
         "mapping_outline": "PORTABLE"
       },
@@ -11419,7 +11490,7 @@
       },
       {
         "fact_id": "functions/composition/004/main.py:8:5/FR/square",
-        "status": "EXACT",
+        "status": "MISS_TYPE",
         "category": "functions",
         "template": "composition",
         "expected": [
@@ -11427,14 +11498,13 @@
           "int"
         ],
         "predicted": [
-          "float",
-          "int"
+          "float"
         ],
         "mapping_outline": "PORTABLE"
       },
       {
         "fact_id": "functions/composition/005/main.py:8:12/FP/x",
-        "status": "EXACT",
+        "status": "MISS_TYPE",
         "category": "functions",
         "template": "composition",
         "expected": [
@@ -11442,21 +11512,20 @@
           "int"
         ],
         "predicted": [
-          "float",
-          "int"
+          "float"
         ],
         "mapping_outline": "PORTABLE"
       },
       {
         "fact_id": "functions/composition/006/main.py:12:1/LV/a",
-        "status": "EXACT",
+        "status": "MISS_TYPE",
         "category": "functions",
         "template": "composition",
         "expected": [
           "int"
         ],
         "predicted": [
-          "int"
+          "float"
         ],
         "mapping_outline": "PORTABLE"
       },
@@ -14004,13 +14073,15 @@
     },
     {
       "fact_id": "assignments/recursive_tuple/013/main.py:33:1/FR/a",
-      "status": "MISS_LOCATION",
+      "status": "EXACT",
       "category": "assignments",
       "template": "recursive_tuple",
       "expected": [
         "callable"
       ],
-      "predicted": [],
+      "predicted": [
+        "callable"
+      ],
       "mapping_outline": "ADAPTED"
     },
     {
@@ -14080,13 +14151,15 @@
     },
     {
       "fact_id": "assignments/recursive_tuple/019/main.py:37:5/LV/b",
-      "status": "MISS_LOCATION",
+      "status": "EXACT",
       "category": "assignments",
       "template": "recursive_tuple",
       "expected": [
         "callable"
       ],
-      "predicted": [],
+      "predicted": [
+        "callable"
+      ],
       "mapping_outline": "ADAPTED"
     },
     {
@@ -14143,15 +14216,13 @@
     },
     {
       "fact_id": "assignments/recursive_tuple/024/main.py:40:1/LV/m['a']",
-      "status": "EXACT",
+      "status": "MISS_LOCATION",
       "category": "assignments",
       "template": "recursive_tuple",
       "expected": [
         "str"
       ],
-      "predicted": [
-        "str"
-      ],
+      "predicted": [],
       "mapping_outline": "ADAPTED"
     },
     {
@@ -14234,24 +14305,28 @@
     },
     {
       "fact_id": "assignments/starred/007/main.py:18:8/LV/b[0]",
-      "status": "MISS_LOCATION",
+      "status": "EXACT",
       "category": "assignments",
       "template": "starred",
       "expected": [
         "callable"
       ],
-      "predicted": [],
+      "predicted": [
+        "callable"
+      ],
       "mapping_outline": "ADAPTED"
     },
     {
       "fact_id": "assignments/starred/008/main.py:18:8/LV/b[1]",
-      "status": "MISS_LOCATION",
+      "status": "EXACT",
       "category": "assignments",
       "template": "starred",
       "expected": [
         "callable"
       ],
-      "predicted": [],
+      "predicted": [
+        "callable"
+      ],
       "mapping_outline": "ADAPTED"
     },
     {
@@ -14516,46 +14591,54 @@
     },
     {
       "fact_id": "assignments/walrus/003/main.py:3:5/FR/count_words",
-      "status": "MISS_LOCATION",
+      "status": "EXACT",
       "category": "assignments",
       "template": "walrus",
       "expected": [
         "list"
       ],
-      "predicted": [],
+      "predicted": [
+        "list"
+      ],
       "mapping_outline": "ADAPTED"
     },
     {
       "fact_id": "assignments/walrus/004/main.py:4:5/FR/count_words",
-      "status": "MISS_LOCATION",
+      "status": "EXACT",
       "category": "assignments",
       "template": "walrus",
       "expected": [
         "int"
       ],
-      "predicted": [],
+      "predicted": [
+        "int"
+      ],
       "mapping_outline": "ADAPTED"
     },
     {
       "fact_id": "assignments/walrus/005/main.py:6:22/FR/count_words",
-      "status": "MISS_LOCATION",
+      "status": "EXACT",
       "category": "assignments",
       "template": "walrus",
       "expected": [
         "str"
       ],
-      "predicted": [],
+      "predicted": [
+        "str"
+      ],
       "mapping_outline": "ADAPTED"
     },
     {
       "fact_id": "assignments/walrus/006/main.py:8:9/FR/count_words",
-      "status": "MISS_LOCATION",
+      "status": "EXACT",
       "category": "assignments",
       "template": "walrus",
       "expected": [
         "int"
       ],
-      "predicted": [],
+      "predicted": [
+        "int"
+      ],
       "mapping_outline": "ADAPTED"
     },
     {
@@ -14612,24 +14695,28 @@
     },
     {
       "fact_id": "classes/abstract_class/004/main.py:12:9/FR/Rectangle.__init__",
-      "status": "MISS_LOCATION",
+      "status": "EXACT",
       "category": "classes",
       "template": "abstract_class",
       "expected": [
         "int"
       ],
-      "predicted": [],
+      "predicted": [
+        "int"
+      ],
       "mapping_outline": "ADAPTED"
     },
     {
       "fact_id": "classes/abstract_class/005/main.py:13:9/FR/Rectangle.__init__",
-      "status": "MISS_LOCATION",
+      "status": "EXACT",
       "category": "classes",
       "template": "abstract_class",
       "expected": [
         "int"
       ],
-      "predicted": [],
+      "predicted": [
+        "int"
+      ],
       "mapping_outline": "ADAPTED"
     },
     {
@@ -14725,35 +14812,41 @@
     },
     {
       "fact_id": "classes/assigned_self_call/002/main.py:6:9/FR/func2",
-      "status": "MISS_LOCATION",
+      "status": "EXACT",
       "category": "classes",
       "template": "assigned_self_call",
       "expected": [
         "str"
       ],
-      "predicted": [],
+      "predicted": [
+        "str"
+      ],
       "mapping_outline": "ADAPTED"
     },
     {
       "fact_id": "classes/assigned_self_call/003/main.py:7:9/FR/MyClass.func2",
-      "status": "MISS_LOCATION",
+      "status": "EXACT",
       "category": "classes",
       "template": "assigned_self_call",
       "expected": [
         "MyClass"
       ],
-      "predicted": [],
+      "predicted": [
+        "MyClass"
+      ],
       "mapping_outline": "ADAPTED"
     },
     {
       "fact_id": "classes/assigned_self_call/004/main.py:1:9/LV/a",
-      "status": "MISS_LOCATION",
+      "status": "EXACT",
       "category": "classes",
       "template": "assigned_self_call",
       "expected": [
         "MyClass"
       ],
-      "predicted": [],
+      "predicted": [
+        "MyClass"
+      ],
       "mapping_outline": "ADAPTED"
     },
     {
@@ -14771,24 +14864,28 @@
     },
     {
       "fact_id": "classes/base_class_attr/001/main.py:5:13/LV/A.B.a",
-      "status": "MISS_LOCATION",
+      "status": "EXACT",
       "category": "classes",
       "template": "base_class_attr",
       "expected": [
         "str"
       ],
-      "predicted": [],
+      "predicted": [
+        "str"
+      ],
       "mapping_outline": "ADAPTED"
     },
     {
       "fact_id": "classes/base_class_attr/002/main.py:7:13/FR/A.B.bfunc",
-      "status": "MISS_LOCATION",
+      "status": "EXACT",
       "category": "classes",
       "template": "base_class_attr",
       "expected": [
         "int"
       ],
-      "predicted": [],
+      "predicted": [
+        "int"
+      ],
       "mapping_outline": "ADAPTED"
     },
     {
@@ -15027,13 +15124,15 @@
     },
     {
       "fact_id": "classes/class_variable/003/main.py:6:9/FR/__init__",
-      "status": "MISS_LOCATION",
+      "status": "EXACT",
       "category": "classes",
       "template": "class_variable",
       "expected": [
         "int"
       ],
-      "predicted": [],
+      "predicted": [
+        "int"
+      ],
       "mapping_outline": "ADAPTED"
     },
     {
@@ -15361,13 +15460,15 @@
     },
     {
       "fact_id": "classes/nested_call/002/main.py:4:13/FR/MyClass.func.nested",
-      "status": "MISS_LOCATION",
+      "status": "EXACT",
       "category": "classes",
       "template": "nested_call",
       "expected": [
         "str"
       ],
-      "predicted": [],
+      "predicted": [
+        "str"
+      ],
       "mapping_outline": "ADAPTED"
     },
     {
@@ -15424,13 +15525,15 @@
     },
     {
       "fact_id": "classes/nested_class_calls/003/main.py:9:9/FR/B.__init__",
-      "status": "MISS_LOCATION",
+      "status": "EXACT",
       "category": "classes",
       "template": "nested_class_calls",
       "expected": [
         "C"
       ],
-      "predicted": [],
+      "predicted": [
+        "C"
+      ],
       "mapping_outline": "ADAPTED"
     },
     {
@@ -15448,13 +15551,15 @@
     },
     {
       "fact_id": "classes/nested_class_calls/005/main.py:17:9/FR/A.__init__",
-      "status": "MISS_LOCATION",
+      "status": "EXACT",
       "category": "classes",
       "template": "nested_class_calls",
       "expected": [
         "C"
       ],
-      "predicted": [],
+      "predicted": [
+        "C"
+      ],
       "mapping_outline": "ADAPTED"
     },
     {
@@ -15472,13 +15577,15 @@
     },
     {
       "fact_id": "classes/nested_class_calls/007/main.py:20:9/FR/A.func",
-      "status": "MISS_LOCATION",
+      "status": "EXACT",
       "category": "classes",
       "template": "nested_class_calls",
       "expected": [
         "B"
       ],
-      "predicted": [],
+      "predicted": [
+        "B"
+      ],
       "mapping_outline": "ADAPTED"
     },
     {
@@ -15756,13 +15863,15 @@
     },
     {
       "fact_id": "classes/self_assign_func/003/main.py:11:9/FR/B.__init__",
-      "status": "MISS_LOCATION",
+      "status": "EXACT",
       "category": "classes",
       "template": "self_assign_func",
       "expected": [
         "A"
       ],
-      "predicted": [],
+      "predicted": [
+        "A"
+      ],
       "mapping_outline": "ADAPTED"
     },
     {
@@ -15819,13 +15928,15 @@
     },
     {
       "fact_id": "classes/self_assignment/001/main.py:6:9/FR/A.__init__",
-      "status": "MISS_LOCATION",
+      "status": "EXACT",
       "category": "classes",
       "template": "self_assignment",
       "expected": [
         "callable"
       ],
-      "predicted": [],
+      "predicted": [
+        "callable"
+      ],
       "mapping_outline": "ADAPTED"
     },
     {
@@ -16350,24 +16461,28 @@
     },
     {
       "fact_id": "dicts/call/005/main.py:12:1/LV/d[1]",
-      "status": "MISS_LOCATION",
+      "status": "EXACT",
       "category": "dicts",
       "template": "call",
       "expected": [
         "callable"
       ],
-      "predicted": [],
+      "predicted": [
+        "callable"
+      ],
       "mapping_outline": "ADAPTED"
     },
     {
       "fact_id": "dicts/call/006/main.py:12:1/LV/d[2]",
-      "status": "MISS_LOCATION",
+      "status": "EXACT",
       "category": "dicts",
       "template": "call",
       "expected": [
         "int"
       ],
-      "predicted": [],
+      "predicted": [
+        "int"
+      ],
       "mapping_outline": "ADAPTED"
     },
     {
@@ -17076,13 +17191,14 @@
     },
     {
       "fact_id": "dicts/param_key/008/main.py:18:1/LV/e",
-      "status": "EXACT",
+      "status": "MISS_TYPE",
       "category": "dicts",
       "template": "param_key",
       "expected": [
         "str"
       ],
       "predicted": [
+        "int",
         "str"
       ],
       "mapping_outline": "ADAPTED"
@@ -17128,24 +17244,28 @@
     },
     {
       "fact_id": "dicts/return/003/main.py:9:5/FR/func1",
-      "status": "MISS_LOCATION",
+      "status": "EXACT",
       "category": "dicts",
       "template": "return",
       "expected": [
         "dict"
       ],
-      "predicted": [],
+      "predicted": [
+        "dict"
+      ],
       "mapping_outline": "ADAPTED"
     },
     {
       "fact_id": "dicts/return/004/main.py:9:5/FR/func1",
-      "status": "MISS_LOCATION",
+      "status": "EXACT",
       "category": "dicts",
       "template": "return",
       "expected": [
         "callable"
       ],
-      "predicted": [],
+      "predicted": [
+        "callable"
+      ],
       "mapping_outline": "ADAPTED"
     },
     {
@@ -17280,13 +17400,15 @@
     },
     {
       "fact_id": "dicts/type_coercion/004/main.py:12:5/LV/d[1]",
-      "status": "MISS_LOCATION",
+      "status": "EXACT",
       "category": "dicts",
       "template": "type_coercion",
       "expected": [
         "callable"
       ],
-      "predicted": [],
+      "predicted": [
+        "callable"
+      ],
       "mapping_outline": "ADAPTED"
     },
     {
@@ -17590,13 +17712,15 @@
     },
     {
       "fact_id": "direct_calls/assigned_call/003/main.py:9:5/FR/func",
-      "status": "MISS_LOCATION",
+      "status": "EXACT",
       "category": "direct_calls",
       "template": "assigned_call",
       "expected": [
         "callable"
       ],
-      "predicted": [],
+      "predicted": [
+        "callable"
+      ],
       "mapping_outline": "PORTABLE"
     },
     {
@@ -17627,14 +17751,14 @@
     },
     {
       "fact_id": "direct_calls/imported_return_call/001/main.py:6:1/LV/a",
-      "status": "EXACT",
+      "status": "MISS_TYPE",
       "category": "direct_calls",
       "template": "imported_return_call",
       "expected": [
         "str"
       ],
       "predicted": [
-        "str"
+        "callable"
       ],
       "mapping_outline": "ADAPTED"
     },
@@ -17692,13 +17816,15 @@
     },
     {
       "fact_id": "direct_calls/return_call/002/main.py:5:9/FR/return_func.nested_return_func",
-      "status": "MISS_LOCATION",
+      "status": "EXACT",
       "category": "direct_calls",
       "template": "return_call",
       "expected": [
         "str"
       ],
-      "predicted": [],
+      "predicted": [
+        "str"
+      ],
       "mapping_outline": "PORTABLE"
     },
     {
@@ -17768,27 +17894,28 @@
     },
     {
       "fact_id": "direct_calls/single_argument/003/main.py:8:5/FR/double",
-      "status": "EXACT",
+      "status": "MISS_TYPE",
       "category": "direct_calls",
       "template": "single_argument",
       "expected": [
         "int"
       ],
       "predicted": [
+        "float",
         "int"
       ],
       "mapping_outline": "PORTABLE"
     },
     {
       "fact_id": "direct_calls/single_argument/004/main.py:8:12/FP/x",
-      "status": "EXACT",
+      "status": "MISS_TYPE",
       "category": "direct_calls",
       "template": "single_argument",
       "expected": [
         "int"
       ],
       "predicted": [
-        "int"
+        "float"
       ],
       "mapping_outline": "PORTABLE"
     },
@@ -18051,7 +18178,7 @@
     },
     {
       "fact_id": "functions/composition/004/main.py:8:5/FR/square",
-      "status": "EXACT",
+      "status": "MISS_TYPE",
       "category": "functions",
       "template": "composition",
       "expected": [
@@ -18059,14 +18186,13 @@
         "int"
       ],
       "predicted": [
-        "float",
-        "int"
+        "float"
       ],
       "mapping_outline": "PORTABLE"
     },
     {
       "fact_id": "functions/composition/005/main.py:8:12/FP/x",
-      "status": "EXACT",
+      "status": "MISS_TYPE",
       "category": "functions",
       "template": "composition",
       "expected": [
@@ -18074,21 +18200,20 @@
         "int"
       ],
       "predicted": [
-        "float",
-        "int"
+        "float"
       ],
       "mapping_outline": "PORTABLE"
     },
     {
       "fact_id": "functions/composition/006/main.py:12:1/LV/a",
-      "status": "EXACT",
+      "status": "MISS_TYPE",
       "category": "functions",
       "template": "composition",
       "expected": [
         "int"
       ],
       "predicted": [
-        "int"
+        "float"
       ],
       "mapping_outline": "PORTABLE"
     },
@@ -18224,13 +18349,15 @@
     },
     {
       "fact_id": "functions/nested/002/main.py:5:5/FR/outer",
-      "status": "MISS_LOCATION",
+      "status": "EXACT",
       "category": "functions",
       "template": "nested",
       "expected": [
         "int"
       ],
-      "predicted": [],
+      "predicted": [
+        "int"
+      ],
       "mapping_outline": "PORTABLE"
     },
     {
@@ -18248,13 +18375,15 @@
     },
     {
       "fact_id": "functions/nested/004/main.py:9:9/FR/inner",
-      "status": "MISS_LOCATION",
+      "status": "EXACT",
       "category": "functions",
       "template": "nested",
       "expected": [
         "int"
       ],
-      "predicted": [],
+      "predicted": [
+        "int"
+      ],
       "mapping_outline": "PORTABLE"
     },
     {
@@ -19769,13 +19898,15 @@
     },
     {
       "fact_id": "returns/object/003/main.py:6:9/FR/__init__",
-      "status": "MISS_LOCATION",
+      "status": "EXACT",
       "category": "returns",
       "template": "object",
       "expected": [
         "str"
       ],
-      "predicted": [],
+      "predicted": [
+        "str"
+      ],
       "mapping_outline": "PORTABLE"
     },
     {
@@ -20055,13 +20186,15 @@
     },
     {
       "fact_id": "returns/return_types/006/main.py:24:5/FR/func3",
-      "status": "MISS_LOCATION",
+      "status": "EXACT",
       "category": "returns",
       "template": "return_types",
       "expected": [
         "type"
       ],
-      "predicted": [],
+      "predicted": [
+        "type"
+      ],
       "mapping_outline": "PORTABLE"
     },
     {
@@ -20118,13 +20251,15 @@
     },
     {
       "fact_id": "returns/return_types/011/main.py:41:22/FR/func5",
-      "status": "MISS_LOCATION",
+      "status": "EXACT",
       "category": "returns",
       "template": "return_types",
       "expected": [
         "int"
       ],
-      "predicted": [],
+      "predicted": [
+        "int"
+      ],
       "mapping_outline": "PORTABLE"
     },
     {

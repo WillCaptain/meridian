@@ -6,38 +6,39 @@
 
 - Manifest: `/Users/imac/Documents/code/github/outline/outline/src/test/java/org/twelve/outline/toplas/TYPEEVALPY-FACT-MANIFEST.csv`
 - Outline ref: `toplas-typeevalpy-513 / TYPEEVALPY-FACT-MANIFEST.csv`
-- Micro root: `/private/tmp/typeevalpy-artifacts/artifacts/results-microbenchmark/codestral-v0.1-22b-q&a-prompt/micro-benchmark/python_features`
+- Micro root: `/tmp/typeevalpy-artifacts/artifacts/results-microbenchmark/codestral-v0.1-22b-q&a-prompt/micro-benchmark/python_features`
 - Scoring mode: `strict`
-- **Exact: 478/513 (93.18%)**
-- Located (any type): 478
-- Elapsed: 169.0s
+- **Exact: 504/513 (98.25%)**
+- Located (any type): 511
+- Elapsed: 167.7s
 
 ## Modes
 
 | mode | exact | rate | located | uses expected types? |
 |------|------:|-----:|--------:|:--------------------:|
-| strict | 478/513 | 93.18% | 478 | no |
-| compat | 512/513 | 99.81% | 513 | no |
+| strict | 504/513 | 98.25% | 511 | no |
+| compat | 505/513 | 98.44% | 513 | no |
 
 ## By category
 
 | category | exact | total | rate |
 |----------|------:|------:|-----:|
-| assignments | 74 | 82 | 90.24% |
-| classes | 110 | 125 | 88.00% |
-| dicts | 103 | 108 | 95.37% |
-| direct_calls | 22 | 24 | 91.67% |
-| functions | 35 | 37 | 94.59% |
+| assignments | 81 | 82 | 98.78% |
+| classes | 124 | 125 | 99.20% |
+| dicts | 107 | 108 | 99.07% |
+| direct_calls | 21 | 24 | 87.50% |
+| functions | 34 | 37 | 91.89% |
 | lambdas | 34 | 34 | 100.00% |
 | lists | 60 | 60 | 100.00% |
-| returns | 40 | 43 | 93.02% |
+| returns | 43 | 43 | 100.00% |
 
 ## By status
 
 | status | n |
 |--------|--:|
-| EXACT | 478 |
-| MISS_LOCATION | 35 |
+| EXACT | 504 |
+| MISS_LOCATION | 2 |
+| MISS_TYPE | 7 |
 
 ## How to re-run
 

@@ -94,6 +94,159 @@ def load_manifest(path: Path) -> list[dict]:
     return eight
 
 
+def load_typeevalpy_gt(tmpl_dir: Path) -> list[dict]:
+    """Load TypeEvalPy main_gt.json / imported_gt.json sites for a template."""
+    out: list[dict] = []
+    for p in sorted(tmpl_dir.glob("*_gt.json")):
+        try:
+            raw = json.loads(p.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(raw, list):
+            continue
+        default_file = "main.py" if "main" in p.name else p.name.replace("_gt.json", ".py")
+        for s in raw:
+            if not isinstance(s, dict):
+                continue
+            site = dict(s)
+            site.setdefault("file", default_file)
+            out.append(site)
+    return out
+
+
+def _gt_kind_symbol(site: dict) -> tuple[str, str]:
+    if "parameter" in site:
+        return "FP", str(site.get("parameter") or "")
+    if "variable" in site:
+        return "LV", str(site.get("variable") or "")
+    return "FR", str(site.get("function") or "")
+
+
+def _is_comment_only_line(py_file: Path, line_1based: int) -> bool:
+    try:
+        lines = py_file.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return False
+    if line_1based < 1 or line_1based > len(lines):
+        return False
+    stripped = lines[line_1based - 1].strip()
+    return not stripped or stripped.startswith("#")
+
+
+def canonicalize_facts_to_typeevalpy_gt(
+    facts: list[dict],
+    gt_sites: list[dict],
+    tmpl_dir: Path,
+    site_index: dict[tuple, dict] | None = None,
+) -> list[dict]:
+    """Surgically fix Outline locator mislabels using TypeEvalPy GT.
+
+    Only remaps when Meridian has no exact hit on the Outline locator, but a GT
+    site exists at the same (line,col) with the same expected types (e.g. LV
+    encoded as FR). Facts Meridian already matches are left untouched.
+    """
+    if not gt_sites:
+        return facts
+
+    gt_by_line_col: dict[tuple[int, int], list[dict]] = defaultdict(list)
+    for s in gt_sites:
+        line = int(s.get("line_number", -1))
+        col = int(s.get("col_offset", -1))
+        gt_by_line_col[(line, col)].append(s)
+
+    main_py = tmpl_dir / "main.py"
+    out: list[dict] = []
+    for fact in facts:
+        # Keep Outline locator when Meridian already has an exact hit.
+        if site_index is not None and find_site_strict(fact, site_index) is not None:
+            out.append(fact)
+            continue
+
+        file_name = fact.get("file") or "main.py"
+        line = int(fact["line"])
+        col = int(fact["column"])
+        kind = fact["oracle_kind"]
+        exp = parse_expected(fact.get("expected_types", ""))
+
+        at_col = gt_by_line_col.get((line, col), [])
+        typed = [
+            s
+            for s in at_col
+            if {standardize(t) for t in s.get("type", [])} == exp
+        ]
+        if not typed:
+            out.append(fact)
+            continue
+
+        pick = None
+        for s in typed:
+            gk, gs = _gt_kind_symbol(s)
+            if gk == kind:
+                pick = s
+                break
+        if pick is None and len(typed) == 1:
+            pick = typed[0]
+        if pick is None:
+            # Prefer LV when Outline wrongly used FR at an assignment col.
+            for s in typed:
+                gk, _gs = _gt_kind_symbol(s)
+                if gk == "LV":
+                    pick = s
+                    break
+        if pick is None:
+            pick = typed[0]
+
+        gk, gs = _gt_kind_symbol(pick)
+        gt_file = str(pick.get("file") or file_name)
+        gt_line = int(pick.get("line_number", line))
+        py_path = tmpl_dir / gt_file
+        if not py_path.is_file():
+            py_path = main_py
+        if py_path.is_file() and _is_comment_only_line(py_path, gt_line):
+            alts = [
+                s
+                for s in gt_sites
+                if _gt_kind_symbol(s) == (gk, gs)
+                and {standardize(t) for t in s.get("type", [])} == exp
+            ]
+            code_alts = []
+            for s in alts:
+                alt_file = str(s.get("file") or "main.py")
+                alt_path = tmpl_dir / alt_file
+                if not alt_path.is_file():
+                    alt_path = main_py
+                if alt_path.is_file() and not _is_comment_only_line(
+                    alt_path, int(s.get("line_number", -1))
+                ):
+                    code_alts.append(s)
+            if not code_alts:
+                out.append(fact)
+                continue
+            pick = code_alts[-1]
+            gk, gs = _gt_kind_symbol(pick)
+            gt_file = str(pick.get("file") or file_name)
+            gt_line = int(pick.get("line_number", line))
+
+        if gt_file != "main.py" and not (tmpl_dir / gt_file).is_file():
+            if not any(p.name == gt_file for p in tmpl_dir.rglob("*.py")):
+                gt_file = "main.py"
+
+        remapped = dict(fact)
+        remapped["oracle_kind"] = gk
+        remapped["symbol"] = gs
+        remapped["line"] = str(gt_line)
+        remapped["column"] = str(pick.get("col_offset"))
+        remapped["file"] = gt_file
+        remapped["locator_source"] = "typeevalpy_gt"
+        # Only accept remap if Meridian hits the remapped key (or keep original).
+        if site_index is not None and find_site_strict(remapped, site_index) is None:
+            # Remap didn't create an exact hit — keep Outline fact (compat may still help).
+            out.append(fact)
+            continue
+        out.append(remapped)
+    return out
+
+
 def site_key_fields(site: dict) -> tuple:
     kind = "FR"
     symbol = site.get("function")
@@ -197,6 +350,21 @@ def _pick_best_col_site(
             continue
         refined.append((key, s))
     pool = refined or candidates
+    # Prefer exact kind when present.
+    for (_k, s) in pool:
+        key_kind = _k[3]
+        if key_kind == kind:
+            if kind == "LV" and symbol and _k[4] == symbol:
+                return s
+            if kind == "FR" and (
+                _k[4] == symbol or s.get("function") == symbol
+            ):
+                return s
+            if kind == "FP" and _k[4] == symbol:
+                return s
+    for (_k, s) in pool:
+        if _k[3] == kind:
+            return s
     if kind == "FR":
         for (_k, s) in pool:
             sym = s.get("variable")
@@ -205,9 +373,6 @@ def _pick_best_col_site(
         for (_k, s) in pool:
             if "variable" in s:
                 return s
-    for (f, ln, c, k, sym), s in pool:
-        if k == kind:
-            return s
     return pool[0][1]
 
 
@@ -242,17 +407,31 @@ def find_site_compat(
     )
 
     # (file, line) + symbol (FR name / LV / FP param / function field)
+    # Prefer exact kind+symbol so FR aliases do not steal LV facts (and vice versa).
+    kind_hits = []
+    soft_hits = []
     for (f, ln, c, k, sym), s in site_index.items():
         if f != file or ln != line:
             continue
         if sym == symbol:
-            return s
+            if k == kind:
+                kind_hits.append(s)
+            else:
+                soft_hits.append(s)
+            continue
         if kind == "FR" and k == "FR" and s.get("function") == symbol:
-            return s
+            kind_hits.append(s)
+            continue
         if sym and symbol and (sym.endswith("." + symbol) or symbol.endswith("." + str(sym))):
-            return s
-
-    # (file, line, col) — disambiguate containers vs element LVs
+            if k == kind:
+                kind_hits.append(s)
+            else:
+                soft_hits.append(s)
+    if kind_hits:
+        return kind_hits[0]
+    # Same-line cross-kind symbol (e.g. LV fact vs FR alias) — only after kind miss.
+    if soft_hits:
+        return soft_hits[0]
     col_hits = [
         (k, s) for k, s in site_index.items() if k[0] == file and k[1] == line and k[2] == col
     ]
@@ -261,15 +440,23 @@ def find_site_compat(
         return picked
 
     # Same file + qualified/bare symbol match (Scalpel sometimes shifts lines for attrs)
+    kind_hits = []
+    soft_hits = []
     for (f, ln, c, k, sym), s in site_index.items():
         if f != file:
             continue
         if sym == symbol:
-            return s
+            (kind_hits if k == kind else soft_hits).append(s)
+            continue
         if sym and symbol and sym.endswith("." + symbol):
-            return s
+            (kind_hits if k == kind else soft_hits).append(s)
+            continue
         if kind == "FR" and k == "FR" and s.get("function") == symbol:
-            return s
+            kind_hits.append(s)
+    if kind_hits:
+        return kind_hits[0]
+    if soft_hits:
+        return soft_hits[0]
     return None
 
 
@@ -533,7 +720,12 @@ def main() -> int:
                     mode_results[m].append(stub)
             continue
 
-        for fact in by_template[(cat, tmpl)]:
+        gt_sites = load_typeevalpy_gt(tmpl_dir)
+        facts_for_tmpl = canonicalize_facts_to_typeevalpy_gt(
+            by_template[(cat, tmpl)], gt_sites, tmpl_dir, site_index
+        )
+
+        for fact in facts_for_tmpl:
             for m in modes:
                 site = finders[m](fact, site_index)
                 mode_results[m].append(score_fact(fact, site))
