@@ -75,7 +75,8 @@ public final class PythonSemanticRefiner {
                 callResults,
                 receiverTypes,
                 importAliases,
-                attrBindings);
+                attrBindings,
+                classAttrs);
     }
 
     public PythonInferenceResult refine(AST gcpAst, Map<String, Object> pyAst, String fileName) {
@@ -248,11 +249,30 @@ public final class PythonSemanticRefiner {
                                                  Map<String, List<String>> callReturns,
                                                  Map<String, List<String>> functionReturns) {
         if (node == null || node.isEmpty()) return;
-        if ("Assign".equals(PyConverter.typeOf(node))) {
+        String t = PyConverter.typeOf(node);
+        // Preserve program order so {@code merged = d1 | d2} sees d1/d2 keys.
+        if ("Module".equals(t) || "FunctionDef".equals(t) || "AsyncFunctionDef".equals(t)
+                || "ClassDef".equals(t)) {
+            for (Map<String, Object> stmt : PyConverter.listOf(node, "body")) {
+                walkAssignsForContainers(stmt, elements, callReturns, functionReturns);
+            }
+            return;
+        }
+        if ("Assign".equals(t)) {
             Map<String, Object> value = PyConverter.mapOf(node, "value");
             for (Map<String, Object> target : PyConverter.listOf(node, "targets")) {
                 projectNameBinding(target, value, elements, callReturns, functionReturns);
             }
+            return;
+        }
+        if ("If".equals(t) || "For".equals(t) || "While".equals(t) || "With".equals(t)) {
+            for (Map<String, Object> stmt : PyConverter.listOf(node, "body")) {
+                walkAssignsForContainers(stmt, elements, callReturns, functionReturns);
+            }
+            for (Map<String, Object> stmt : PyConverter.listOf(node, "orelse")) {
+                walkAssignsForContainers(stmt, elements, callReturns, functionReturns);
+            }
+            return;
         }
         for (Object v : node.values()) {
             if (v instanceof Map<?, ?> m) {
@@ -285,17 +305,43 @@ public final class PythonSemanticRefiner {
             for (int i = 0; i < elts.size(); i++) {
                 Map<String, Object> elt = elts.get(i);
                 List<String> et = literalType(elt);
-                if (et.isEmpty() && "Name".equals(PyConverter.typeOf(elt))) {
-                    et = List.of("callable");
+                if ("Name".equals(PyConverter.typeOf(elt))) {
                     String id = PyConverter.strOf(elt, "id");
                     List<String> fr = id == null ? null : functionReturns.get(id);
                     if (fr != null) callReturns.put(name + "[" + i + "]", fr);
+                    if (et.isEmpty()) et = List.of("callable");
                 }
                 if (et.isEmpty() || et.equals(List.of("Any"))) continue;
                 elements.put(name + "[" + i + "]", et);
             }
         } else if ("Dict".equals(PyConverter.typeOf(value))) {
             projectDictElements(name, value, elements, callReturns, functionReturns);
+        } else if ("BinOp".equals(PyConverter.typeOf(value))
+                && "BitOr".equals(PyConverter.typeOf(PyConverter.mapOf(value, "op")))) {
+            // merged = d1 | d2 — only when both sides are Names (dict merge, not int|).
+            boolean any = false;
+            for (String side : List.of("left", "right")) {
+                Map<String, Object> src = PyConverter.mapOf(value, side);
+                if (!"Name".equals(PyConverter.typeOf(src))) continue;
+                String srcName = PyConverter.strOf(src, "id");
+                if (srcName == null) continue;
+                String prefix = srcName + "[";
+                for (Map.Entry<String, List<String>> e : List.copyOf(elements.entrySet())) {
+                    if (!e.getKey().startsWith(prefix)) continue;
+                    String suffix = e.getKey().substring(srcName.length());
+                    elements.putIfAbsent(name + suffix, e.getValue());
+                    any = true;
+                }
+            }
+            if (!any) {
+                // Literal dict | literal dict
+                for (String side : List.of("left", "right")) {
+                    Map<String, Object> src = PyConverter.mapOf(value, side);
+                    if ("Dict".equals(PyConverter.typeOf(src))) {
+                        projectDictElements(name, src, elements, callReturns, functionReturns);
+                    }
+                }
+            }
         }
     }
 
@@ -314,11 +360,11 @@ public final class PythonSemanticRefiner {
             String path = constantIndexSite(dictName, key);
             if (path == null) continue;
             List<String> et = literalType(val);
-            if (et.isEmpty() && "Name".equals(PyConverter.typeOf(val))) {
-                et = List.of("callable");
+            if ("Name".equals(PyConverter.typeOf(val))) {
                 String id = PyConverter.strOf(val, "id");
                 List<String> fr = id == null ? null : functionReturns.get(id);
                 if (fr != null) callReturns.put(path, fr);
+                if (et.isEmpty()) et = List.of("callable");
             }
             if (et.isEmpty()) continue;
             elements.put(path, et);

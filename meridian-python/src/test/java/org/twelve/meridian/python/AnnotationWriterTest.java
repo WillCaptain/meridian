@@ -83,6 +83,39 @@ class AnnotationWriterTest {
                 "Annotated math_utils.py should be valid Python");
     }
 
+    @Test
+    void annotate_from_inference_result_uses_method_and_receiver_hints() {
+        String src = """
+                class Box:
+                    def value(self):
+                        return 42
+
+                b = Box()
+                """;
+        PythonInferenceResult inf = inferencer.inferDetailed(src);
+        String annotated = new PythonAnnotationWriter().annotate(src, inf);
+        assertTrue(annotated.contains("b: Box") || annotated.contains("b:"),
+                () -> "receiver should annotate b: " + annotated);
+        assertTrue(annotated.contains("-> int") || annotated.contains("value"),
+                () -> "method return should reach writer: " + annotated);
+        assertDoesNotThrow(() -> new PythonAstBridge().parse(annotated),
+                "Annotated source should be valid Python");
+    }
+
+    @Test
+    void annotate_from_inference_result_uses_call_site_params() {
+        String src = """
+                def add(a, b):
+                    return a + b
+
+                x = add(1, 2)
+                """;
+        PythonInferenceResult inf = inferencer.inferDetailed(src);
+        String annotated = new PythonAnnotationWriter().annotate(src, inf);
+        assertTrue(annotated.contains("a: int"), () -> annotated);
+        assertTrue(annotated.contains("b: int"), () -> annotated);
+    }
+
     // ── TypeAnnotationGenerator (outlineToTypeStr) ───────────────────────────
 
     @Test

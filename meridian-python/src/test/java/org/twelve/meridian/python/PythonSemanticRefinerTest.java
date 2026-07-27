@@ -161,4 +161,32 @@ class PythonSemanticRefinerTest {
         assertEquals(List.of("str"), r.callResults().get("y"),
                 () -> String.valueOf(r.callResults()));
     }
+
+    @Test
+    void classAttrLiteralsAndDictBitOrMerge() {
+        PythonInferenceResult r = new PythonInferencer().inferDetailed("""
+                class T:
+                    label = "t"
+
+                a = {'k': 1}
+                b = {'m': 2}
+                c = a | b
+                """);
+        assertEquals(List.of("str"), r.classAttrLiterals().get("T.label"));
+        assertEquals(List.of("int"), r.containerElements().get("c['k']"));
+        assertEquals(List.of("int"), r.containerElements().get("c['m']"));
+    }
+
+    @Test
+    void annotationHintsIncludeMethodReturnAndReceiver() {
+        PythonInferenceResult r = new PythonInferencer().inferDetailed("""
+                class A:
+                    def run(self):
+                        return "x"
+
+                o = A()
+                """);
+        assertEquals("str", r.annotationHints().get("run#return"));
+        assertEquals("A", r.annotationHints().get("o"));
+    }
 }

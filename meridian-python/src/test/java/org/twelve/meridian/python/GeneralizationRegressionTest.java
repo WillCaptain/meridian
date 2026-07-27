@@ -183,4 +183,94 @@ class GeneralizationRegressionTest {
                 () -> "str accumulation should stay string-shaped: " + stub);
         assertFalse(stub.contains("s: int"), () -> stub);
     }
+
+    @Test
+    void nested_dict_projects_inner_key_not_invented_a() {
+        PythonInferenceResult inf = inferencer.inferDetailed("""
+                d = {'outer': {'inner': 7}}
+                """);
+        assertEquals(List.of("dict"), inf.containerElements().get("d['outer']"));
+        assertEquals(List.of("int"), inf.containerElements().get("d['outer']['inner']"));
+        assertFalse(inf.containerElements().containsKey("d['a']"));
+        List<Map<String, Object>> sites = new TypeEvalPySiteExporter().collect(inf);
+        assertTrue(sites.stream().anyMatch(s -> "d['outer']['inner']".equals(s.get("variable"))),
+                () -> String.valueOf(sites));
+        assertTrue(sites.stream().noneMatch(s -> {
+            Object v = s.get("variable");
+            return v instanceof String name && name.contains("['a']");
+        }), () -> String.valueOf(sites));
+    }
+
+    @Test
+    void returned_callable_slot_and_invocation() {
+        PythonInferenceResult inf = inferencer.inferDetailed("""
+                def other():
+                    return 1
+
+                def make():
+                    return other
+
+                x = make()
+                y = x()
+                """);
+        assertEquals(List.of("int"), inf.callReturns().get("x"));
+        assertEquals(List.of("int"), inf.callResults().get("y"));
+        List<Map<String, Object>> sites = new TypeEvalPySiteExporter().collect(inf);
+        Map<String, Object> y = sites.stream()
+                .filter(s -> "y".equals(s.get("variable")))
+                .findFirst()
+                .orElse(null);
+        assertNotNull(y, () -> String.valueOf(sites));
+        assertTrue(((List<?>) y.get("type")).contains("int"), () -> String.valueOf(y));
+    }
+
+    @Test
+    void list_element_callable_slot_xs0() {
+        PythonInferenceResult inf = inferencer.inferDetailed("""
+                def f():
+                    return "hi"
+
+                xs = [f]
+                """);
+        assertEquals(List.of("callable"), inf.containerElements().get("xs[0]"));
+        assertEquals(List.of("str"), inf.callReturns().get("xs[0]"));
+        List<Map<String, Object>> sites = new TypeEvalPySiteExporter().collect(inf);
+        assertTrue(sites.stream().anyMatch(s -> "xs[0]".equals(s.get("variable"))),
+                () -> String.valueOf(sites));
+    }
+
+    @Test
+    void dict_bitor_merges_known_keys() {
+        PythonInferenceResult inf = inferencer.inferDetailed("""
+                d1 = {'x': 1}
+                d2 = {'y': 'z'}
+                merged = d1 | d2
+                """);
+        assertEquals(List.of("int"), inf.containerElements().get("merged['x']"),
+                () -> String.valueOf(inf.containerElements()));
+        assertEquals(List.of("str"), inf.containerElements().get("merged['y']"),
+                () -> String.valueOf(inf.containerElements()));
+        assertFalse(inf.containerElements().containsKey("merged['a']"));
+    }
+
+    @Test
+    void class_attr_literal_and_receiver_types() {
+        PythonInferenceResult inf = inferencer.inferDetailed("""
+                class C:
+                    kind = "c"
+
+                    def run(self):
+                        return 1
+
+                obj = C()
+                """);
+        assertEquals(List.of("str"), inf.classAttrLiterals().get("C.kind"));
+        assertEquals("C", inf.receiverTypes().get("obj"));
+        assertEquals(List.of("int"), inf.methodReturns().get("C.run"));
+        assertEquals("int", inf.annotationHints().get("run#return"));
+        assertEquals("C", inf.annotationHints().get("obj"));
+        List<Map<String, Object>> sites = new TypeEvalPySiteExporter().collect(inf);
+        assertTrue(sites.stream().anyMatch(s -> "C.kind".equals(s.get("variable"))),
+                () -> String.valueOf(sites));
+    }
 }

@@ -63,8 +63,11 @@ public class PythonAnnotationWriter {
     }
 
     /**
-     * Produce an annotated copy using a shared {@link PythonInferenceResult}
-     * (call-site param hints + GCP outlines).
+     * Produce an annotated copy using a shared {@link PythonInferenceResult}.
+     *
+     * <p>Consumes {@link PythonInferenceResult#annotationHints()} which includes
+     * call-site params, method/function returns, call results, and receiver
+     * nominal types — layered on top of GCP outlines.
      */
     public String annotate(String originalSource, PythonInferenceResult result) {
         if (result == null) {

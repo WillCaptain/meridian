@@ -52,6 +52,9 @@ public final class PythonInferenceResult {
     /** class → ({@code self.attr} → {@code self.method}) bindings. */
     private final Map<String, Map<String, String>> attrMethodBindings;
 
+    /** {@code Class.attr} → literal types from class-body assignments. */
+    private final Map<String, List<String>> classAttrLiterals;
+
     public PythonInferenceResult(
             AST gcpAst,
             Map<String, Object> pyAst,
@@ -65,7 +68,8 @@ public final class PythonInferenceResult {
             Map<String, List<String>> callResults,
             Map<String, String> receiverTypes,
             Map<String, String> importAliases,
-            Map<String, Map<String, String>> attrMethodBindings) {
+            Map<String, Map<String, String>> attrMethodBindings,
+            Map<String, List<String>> classAttrLiterals) {
         this.gcpAst = gcpAst;
         this.pyAst = pyAst;
         this.fileName = fileName;
@@ -79,6 +83,7 @@ public final class PythonInferenceResult {
         this.receiverTypes = Map.copyOf(receiverTypes);
         this.importAliases = Map.copyOf(importAliases);
         this.attrMethodBindings = copyStringMap(attrMethodBindings);
+        this.classAttrLiterals = Map.copyOf(classAttrLiterals);
     }
 
     public AST gcpAst() {
@@ -133,8 +138,17 @@ public final class PythonInferenceResult {
         return attrMethodBindings;
     }
 
+    public Map<String, List<String>> classAttrLiterals() {
+        return classAttrLiterals;
+    }
+
     /**
-     * Annotation-writer keys: {@code func#param} → first Meridian type token.
+     * Annotation-writer keys consumed by {@link PythonAnnotationWriter}:
+     * <ul>
+     *   <li>{@code func#param} — call-site refined params</li>
+     *   <li>{@code func#return} / {@code Class.method#return} — method / function returns</li>
+     *   <li>bare variable — call results and receiver nominal types</li>
+     * </ul>
      */
     public Map<String, String> annotationHints() {
         Map<String, String> out = new LinkedHashMap<>();
@@ -145,9 +159,25 @@ public final class PythonInferenceResult {
                 out.put(fn.getKey() + "#" + p.getKey(), types.get(0));
             }
         }
+        for (Map.Entry<String, List<String>> e : methodReturns.entrySet()) {
+            if (e.getValue() == null || e.getValue().isEmpty()) continue;
+            String qname = e.getKey();
+            String token = e.getValue().get(0);
+            out.putIfAbsent(qname + "#return", token);
+            int dot = qname.lastIndexOf('.');
+            if (dot > 0) {
+                out.putIfAbsent(qname.substring(dot + 1) + "#return", token);
+            } else {
+                out.putIfAbsent(qname + "#return", token);
+            }
+        }
         for (Map.Entry<String, List<String>> e : callResults.entrySet()) {
             if (e.getValue() == null || e.getValue().isEmpty()) continue;
             out.putIfAbsent(e.getKey(), e.getValue().get(0));
+        }
+        for (Map.Entry<String, String> e : receiverTypes.entrySet()) {
+            if (e.getValue() == null || e.getValue().isBlank()) continue;
+            out.putIfAbsent(e.getKey(), e.getValue());
         }
         return out;
     }

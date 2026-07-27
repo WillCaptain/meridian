@@ -66,12 +66,14 @@ public class TypeEvalPySiteExporter {
         return sharedInference != null && skipForeignSummaries;
     }
 
-    /** Final overlay: shared container / call / method facts onto site JSON. */
+    /** Final overlay: shared container / call / method / receiver facts onto site JSON. */
     private void applySharedInferenceOverlay(List<Map<String, Object>> sites, String fileName) {
         if (sharedInference == null) return;
         applySharedContainerElements(sites, fileName);
         applySharedCallResults(sites, fileName);
         applySharedMethodReturns(sites, fileName);
+        applySharedReceiverTypes(sites, fileName);
+        applySharedClassAttrLiterals(sites, fileName);
     }
 
     public List<Map<String, Object>> collect(AST ast, String fileName) {
@@ -254,9 +256,6 @@ public class TypeEvalPySiteExporter {
         // Fill FR/FP gaps from py AST (dual cols, AugAssign FPs, return heuristics).
         ensureFunctionSitesFromPyAst(sites, pyModule, fileName);
         emitClassBodyAttrs(sites, pyModule, fileName);
-        if (!usesSharedSemanticLayer()) {
-            fixDelegatingMethodReturns(sites, pyModule, fileName);
-        }
         // Seed container LVs before expandNameBinding so we never invent keys.
         if (sharedInference != null) {
             applySharedContainerElements(sites, fileName);
@@ -268,10 +267,6 @@ public class TypeEvalPySiteExporter {
                     lvByName, listLits, dictLits, callReturns, frTypes);
             refineCallAssignments(sites, stmt, fileName, listLits, callReturns, frTypes, true);
             emitCallResultElements(sites, stmt, fileName, callReturns, frTypes, dictLits);
-        }
-        // Re-resolve return self.attr now that Class.attr LVs exist (base_class_attr).
-        if (!usesSharedSemanticLayer()) {
-            refineSelfAttrMethodReturns(sites, pyModule, fileName);
         }
         // Module-level use sites: imports, attr loads, dict stores, lambdas, .copy().
         Map<String, String> importAliases = collectImportAliases(pyModule);
@@ -518,6 +513,51 @@ public class TypeEvalPySiteExporter {
                     }
                 }
             }
+        }
+    }
+
+    /** Apply shared receiver nominal types ({@code x = Class(...)}). */
+    private void applySharedReceiverTypes(List<Map<String, Object>> sites, String fileName) {
+        if (sharedInference == null) return;
+        for (Map.Entry<String, String> e : sharedInference.receiverTypes().entrySet()) {
+            String var = e.getKey();
+            String cls = e.getValue();
+            if (var == null || cls == null || cls.isBlank()) continue;
+            List<String> types = List.of(cls);
+            boolean updated = false;
+            for (Map<String, Object> s : sites) {
+                if (!var.equals(s.get("variable"))) continue;
+                Object cur = s.get("type");
+                if (cur instanceof List<?> list && !list.isEmpty()
+                        && !shouldPreferSharedTypes(list, types)) {
+                    updated = true;
+                    continue;
+                }
+                s.put("type", types);
+                updated = true;
+            }
+            if (!updated) {
+                addLv(sites, fileName, 1, 0, var, types);
+            }
+        }
+    }
+
+    /** Ensure class-body attr LVs exist from shared classAttrLiterals. */
+    private void applySharedClassAttrLiterals(List<Map<String, Object>> sites, String fileName) {
+        if (sharedInference == null) return;
+        for (Map.Entry<String, List<String>> e : sharedInference.classAttrLiterals().entrySet()) {
+            String qname = e.getKey();
+            List<String> types = e.getValue();
+            if (qname == null || types == null || types.isEmpty()) continue;
+            boolean present = false;
+            for (Map<String, Object> s : sites) {
+                if (qname.equals(s.get("variable"))) {
+                    present = true;
+                    break;
+                }
+            }
+            if (present) continue;
+            addLv(sites, fileName, 1, 0, qname, types);
         }
     }
 
@@ -1602,10 +1642,14 @@ public class TypeEvalPySiteExporter {
         if ("List".equals(PyConverter.typeOf(value))) {
             List<Map<String, Object>> elts = PyConverter.listOf(value, "elts");
             ensureLv(sites, lvByName, fileName, name, line, col, List.of("list"));
+            // Shared refine already projected literal indices; only fill callReturns / nested.
+            boolean skipLiteralLv = usesSharedSemanticLayer();
             for (int i = 0; i < elts.size(); i++) {
                 Map<String, Object> elt = elts.get(i);
                 if ("List".equals(PyConverter.typeOf(elt))) {
-                    addLv(sites, fileName, line, col, name + "[" + i + "]", List.of("list"));
+                    if (!skipLiteralLv) {
+                        addLv(sites, fileName, line, col, name + "[" + i + "]", List.of("list"));
+                    }
                     List<Map<String, Object>> inner = PyConverter.listOf(elt, "elts");
                     for (int j = 0; j < inner.size(); j++) {
                         List<String> et = literalType(inner.get(j));
@@ -1613,7 +1657,6 @@ public class TypeEvalPySiteExporter {
                             et = List.of("callable");
                         }
                         if (et.isEmpty()) continue;
-                        // Nested path not always in GT; callReturns keyed via outer[i] element
                         if ("Name".equals(PyConverter.typeOf(inner.get(j)))) {
                             List<String> ret = frTypes.get(PyConverter.strOf(inner.get(j), "id"));
                             if (ret != null) {
@@ -1629,7 +1672,9 @@ public class TypeEvalPySiteExporter {
                     et = List.of("callable");
                 }
                 if (et.isEmpty() || et.equals(List.of("Any"))) continue;
-                addLv(sites, fileName, line, col, name + "[" + i + "]", et);
+                if (!skipLiteralLv) {
+                    addLv(sites, fileName, line, col, name + "[" + i + "]", et);
+                }
                 if ("Name".equals(PyConverter.typeOf(elt))) {
                     List<String> ret = frTypes.get(PyConverter.strOf(elt, "id"));
                     if (ret != null) callReturns.put(name + "[" + i + "]", ret);
@@ -1637,16 +1682,23 @@ public class TypeEvalPySiteExporter {
             }
         } else if ("Dict".equals(PyConverter.typeOf(value))) {
             ensureLv(sites, lvByName, fileName, name, line, col, List.of("dict"));
-            emitDictElements(sites, fileName, line, col, name, value, frTypes, callReturns, dictLits);
+            if (!usesSharedSemanticLayer()) {
+                emitDictElements(sites, fileName, line, col, name, value, frTypes, callReturns, dictLits);
+            } else {
+                // Still bind callable slots for Name values; literal keys come from shared.
+                emitDictCallableSlots(sites, fileName, line, col, name, value, frTypes, callReturns);
+            }
         } else if ("BinOp".equals(PyConverter.typeOf(value))
                 && "BitOr".equals(PyConverter.typeOf(PyConverter.mapOf(value, "op")))) {
             // merged = dict1 | dict2
             ensureLv(sites, lvByName, fileName, name, line, col, List.of("dict"));
-            for (String side : List.of("left", "right")) {
-                Map<String, Object> src = PyConverter.mapOf(value, side);
-                if ("Name".equals(PyConverter.typeOf(src))) {
-                    copyDictElements(sites, fileName, line, col, name,
-                            PyConverter.strOf(src, "id"), dictLits);
+            if (!usesSharedSemanticLayer()) {
+                for (String side : List.of("left", "right")) {
+                    Map<String, Object> src = PyConverter.mapOf(value, side);
+                    if ("Name".equals(PyConverter.typeOf(src))) {
+                        copyDictElements(sites, fileName, line, col, name,
+                                PyConverter.strOf(src, "id"), dictLits);
+                    }
                 }
             }
         } else if ("Call".equals(PyConverter.typeOf(value))) {
@@ -1674,6 +1726,10 @@ public class TypeEvalPySiteExporter {
             }
             // b = B() / x = SomeClass() — only nominal constructors (not my_func(10) → callable)
             List<String> ctor = literalType(value);
+            if (sharedInference != null) {
+                String recv = sharedInference.receiverTypes().get(name);
+                if (recv != null && !recv.isBlank()) ctor = List.of(recv);
+            }
             if (!ctor.isEmpty() && !ctor.equals(List.of("callable"))) {
                 ensureLv(sites, lvByName, fileName, name, line, col, ctor);
             }
@@ -1727,6 +1783,31 @@ public class TypeEvalPySiteExporter {
                 List<String> ret = frTypes.get(PyConverter.strOf(val, "id"));
                 if (ret != null) callReturns.put(site, ret);
             }
+        }
+    }
+
+    /** When shared layer owns literal dict keys, only bind Name → callable callReturns. */
+    private void emitDictCallableSlots(List<Map<String, Object>> sites,
+                                       String fileName, int line0, int col0,
+                                       String dictName,
+                                       Map<String, Object> dictLit,
+                                       Map<String, List<String>> frTypes,
+                                       Map<String, List<String>> callReturns) {
+        List<Map<String, Object>> keys = PyConverter.listOf(dictLit, "keys");
+        List<Map<String, Object>> vals = PyConverter.listOf(dictLit, "values");
+        int n = Math.min(keys.size(), vals.size());
+        for (int i = 0; i < n; i++) {
+            if (keys.get(i) == null) continue;
+            String site = constantIndexSite(dictName, keys.get(i));
+            if (site == null) continue;
+            Map<String, Object> val = vals.get(i);
+            if ("Dict".equals(PyConverter.typeOf(val))) {
+                emitDictCallableSlots(sites, fileName, line0, col0, site, val, frTypes, callReturns);
+                continue;
+            }
+            if (!"Name".equals(PyConverter.typeOf(val))) continue;
+            List<String> ret = frTypes.get(PyConverter.strOf(val, "id"));
+            if (ret != null) callReturns.put(site, ret);
         }
     }
 
@@ -2672,137 +2753,6 @@ public class TypeEvalPySiteExporter {
 
     // ── Module-level / import / lambda harness adapters ──────────────────────
 
-    /**
-     * Fix FRs for {@code return self.attr()} / {@code return self.method} using
-     * {@code self.attr = self.method} bindings in the same class hierarchy.
-     */
-    private void fixDelegatingMethodReturns(List<Map<String, Object>> sites,
-                                            Map<String, Object> pyModule,
-                                            String fileName) {
-        Map<String, Map<String, String>> bindings = collectAttrMethodBindings(pyModule);
-        Map<String, List<String>> fr = indexFrTypes(sites);
-
-        for (Map<String, Object> stmt : PyConverter.listOf(pyModule, "body")) {
-            if (!"ClassDef".equals(PyConverter.typeOf(stmt))) continue;
-            String cls = PyConverter.strOf(stmt, "name");
-            for (Map<String, Object> body : PyConverter.listOf(stmt, "body")) {
-                if (!"FunctionDef".equals(PyConverter.typeOf(body))) continue;
-                String method = PyConverter.strOf(body, "name");
-                String qname = cls + "." + method;
-                List<String> cur = fr.get(qname);
-                if (cur != null && !cur.equals(List.of("callable")) && !cur.equals(List.of("Nonetype"))
-                        && !cur.isEmpty()) {
-                    continue;
-                }
-                List<String> inferred = inferDelegatedReturn(body, cls, bindings, fr);
-                if (inferred.isEmpty()) continue;
-                int line = PyConverter.lineOf(body);
-                int nameCol = PyConverter.functionNameCol(body);
-                int defCol = PyConverter.colOf(body);
-                ensureFr(sites, fileName, line, nameCol, qname, inferred);
-                if (defCol >= 0 && defCol != nameCol) {
-                    ensureFr(sites, fileName, line, defCol, qname, inferred);
-                }
-                fr.put(qname, inferred);
-            }
-        }
-    }
-
-    private List<String> inferDelegatedReturn(Map<String, Object> func,
-                                              String cls,
-                                              Map<String, Map<String, String>> bindings,
-                                              Map<String, List<String>> fr) {
-        for (Map<String, Object> stmt : PyConverter.listOf(func, "body")) {
-            if (!"Return".equals(PyConverter.typeOf(stmt))) continue;
-            Map<String, Object> value = PyConverter.mapOf(stmt, "value");
-            if ("Attribute".equals(PyConverter.typeOf(value))) {
-                // return self.func2 — method reference → callable (not underlying return)
-                if ("self".equals(PyConverter.strOf(PyConverter.mapOf(value, "value"), "id"))) {
-                    return List.of("callable");
-                }
-            }
-            if ("Call".equals(PyConverter.typeOf(value))) {
-                Map<String, Object> callee = PyConverter.mapOf(value, "func");
-                if ("Attribute".equals(PyConverter.typeOf(callee))
-                        && "self".equals(PyConverter.strOf(PyConverter.mapOf(callee, "value"), "id"))) {
-                    String attr = PyConverter.strOf(callee, "attr");
-                    // return self.smth() / self.child()
-                    // 1) direct method
-                    List<String> direct = fr.get(cls + "." + attr);
-                    if (direct != null && !direct.isEmpty() && !direct.equals(List.of("callable"))) {
-                        return direct;
-                    }
-                    // 2) via self.attr = self.method bindings (this class + others)
-                    for (Map.Entry<String, Map<String, String>> e : bindings.entrySet()) {
-                        String bound = e.getValue().get(attr);
-                        if (bound == null) continue;
-                        List<String> t = fr.get(e.getKey() + "." + bound);
-                        if (t == null) t = fr.get(bound);
-                        if (t != null && !t.isEmpty() && !t.equals(List.of("callable"))) {
-                            return t;
-                        }
-                    }
-                }
-            }
-        }
-        return List.of();
-    }
-
-    private void refineSelfAttrMethodReturns(List<Map<String, Object>> sites,
-                                             Map<String, Object> pyModule,
-                                             String fileName) {
-        for (Map<String, Object> stmt : PyConverter.listOf(pyModule, "body")) {
-            refineSelfAttrInClass(sites, stmt, fileName, null);
-        }
-    }
-
-    private void refineSelfAttrInClass(List<Map<String, Object>> sites,
-                                       Map<String, Object> stmt,
-                                       String fileName,
-                                       String className) {
-        String t = PyConverter.typeOf(stmt);
-        if ("ClassDef".equals(t)) {
-            String name = PyConverter.strOf(stmt, "name");
-            for (Map<String, Object> body : PyConverter.listOf(stmt, "body")) {
-                refineSelfAttrInClass(sites, body, fileName, name);
-            }
-            return;
-        }
-        if (!"FunctionDef".equals(t) && !"AsyncFunctionDef".equals(t)) return;
-        String bare = PyConverter.strOf(stmt, "name");
-        String qname = className != null ? className + "." + bare : bare;
-        for (Map<String, Object> body : PyConverter.listOf(stmt, "body")) {
-            if (!"Return".equals(PyConverter.typeOf(body))) continue;
-            Map<String, Object> value = PyConverter.mapOf(body, "value");
-            if (!"Attribute".equals(PyConverter.typeOf(value))) continue;
-            if (!"self".equals(PyConverter.strOf(PyConverter.mapOf(value, "value"), "id"))) continue;
-            String attr = PyConverter.strOf(value, "attr");
-            List<String> types = lookupSelfAttrTypes(sites, className, attr);
-            if (types.isEmpty()) {
-                for (Map<String, Object> s : sites) {
-                    Object v = s.get("variable");
-                    if (v instanceof String n && n.endsWith("." + attr)) {
-                        Object ty = s.get("type");
-                        if (ty instanceof List<?> list && !list.isEmpty()
-                                && !list.equals(List.of("callable"))) {
-                            types = new ArrayList<>();
-                            for (Object o : list) types.add(String.valueOf(o));
-                            break;
-                        }
-                    }
-                }
-            }
-            if (types.isEmpty()) continue;
-            int line = PyConverter.lineOf(stmt);
-            int nameCol = PyConverter.functionNameCol(stmt);
-            int defCol = PyConverter.colOf(stmt);
-            forceEnsureFr(sites, fileName, line, nameCol, qname, types);
-            if (defCol >= 0 && defCol != nameCol) {
-                forceEnsureFr(sites, fileName, line, defCol, qname, types);
-            }
-        }
-    }
-
     private void emitClassBodyAttrs(List<Map<String, Object>> sites,
                                     Map<String, Object> pyModule,
                                     String fileName) {
@@ -2821,7 +2771,7 @@ public class TypeEvalPySiteExporter {
                     int col = PyConverter.colOf(target);
                     String qname = className + "." + attr;
                     if (sharedInference != null) {
-                        List<String> shared = sharedInference.containerElements().get(qname);
+                        List<String> shared = sharedInference.classAttrLiterals().get(qname);
                         if (shared != null && !shared.isEmpty()) types = shared;
                     }
                     upsertLv(sites, fileName, line, col, qname, types);
