@@ -131,11 +131,29 @@ public class PythonInferencer {
         Map<String, Object> pyAst = bridge.parseFile(pythonFile);
         AST ast = converter.convert(pyAst);
         asf.infer();
-        return new InferResult(ast, pyAst);
+        PythonInferenceResult inference =
+                new PythonSemanticRefiner().refine(ast, pyAst, pythonFile.getName(), pythonFile.toPath());
+        return new InferResult(ast, pyAst, inference);
+    }
+
+    /**
+     * Parse + infer + refine a Python source string (no file path).
+     * Returns the shared {@link PythonInferenceResult} used by annotate / sites.
+     */
+    public PythonInferenceResult inferDetailed(String pythonSource) {
+        converter.setModuleLoader(moduleRegistry.isEmpty() ? null : buildLoader(null));
+        Map<String, Object> pyAst = bridge.parse(pythonSource);
+        AST ast = converter.convert(pyAst);
+        asf.infer();
+        return new PythonSemanticRefiner().refine(ast, pyAst, "<string>", null);
     }
 
     /** Result of {@link #inferFileDetailed(File)}. */
-    public record InferResult(AST ast, Map<String, Object> pyAst) {}
+    public record InferResult(AST ast, Map<String, Object> pyAst, PythonInferenceResult inference) {
+        public InferResult(AST ast, Map<String, Object> pyAst) {
+            this(ast, pyAst, new PythonSemanticRefiner().refine(ast, pyAst, "<unknown>", null));
+        }
+    }
 
     /**
      * Demand-driven (call-site) inference: process the library source together with

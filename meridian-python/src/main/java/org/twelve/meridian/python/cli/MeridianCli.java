@@ -113,16 +113,15 @@ public final class MeridianCli {
     private static int writeAnnotated(File input, Path out) throws IOException {
         String source = Files.readString(input.toPath(), StandardCharsets.UTF_8);
         PythonInferencer inferencer = new PythonInferencer();
-        AST ast = inferencer.inferFile(input);
-        String annotated = new PythonAnnotationWriter().annotate(source, ast);
+        PythonInferencer.InferResult inferred = inferencer.inferFileDetailed(input);
+        String annotated = new PythonAnnotationWriter().annotate(source, inferred.inference());
         return emit(annotated, out);
     }
 
     private static int writeSites(File input, Path out) throws IOException {
         PythonInferencer.InferResult inferred = new PythonInferencer().inferFileDetailed(input);
         TypeEvalPySiteExporter exporter = new TypeEvalPySiteExporter();
-        List<Map<String, Object>> sites =
-                exporter.collect(inferred.ast(), input.getName(), inferred.pyAst(), input.toPath());
+        List<Map<String, Object>> sites = exporter.collect(inferred.inference());
         String json = exporter.toJson(sites);
         return emit(json, out);
     }

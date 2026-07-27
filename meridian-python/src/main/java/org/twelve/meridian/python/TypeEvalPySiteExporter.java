@@ -53,15 +53,18 @@ public class TypeEvalPySiteExporter {
 
     private final TypeAnnotationGenerator typeGen = new TypeAnnotationGenerator();
 
+    /** Shared semantic refine result for the current {@link #collect} invocation. */
+    private PythonInferenceResult sharedInference;
+
     public List<Map<String, Object>> collect(AST ast, String fileName) {
-        return collect(ast, fileName, null, null);
+        return collect(ast, fileName, null, null, null);
     }
 
     /**
      * @param pyAst optional Python JSON AST from {@link PythonAstBridge} for harness adapters
      */
     public List<Map<String, Object>> collect(AST ast, String fileName, Map<String, Object> pyAst) {
-        return collect(ast, fileName, pyAst, null);
+        return collect(ast, fileName, pyAst, null, null);
     }
 
     /**
@@ -69,12 +72,42 @@ public class TypeEvalPySiteExporter {
      */
     public List<Map<String, Object>> collect(AST ast, String fileName, Map<String, Object> pyAst,
                                             Path sourcePath) {
-        List<Map<String, Object>> sites = new ArrayList<>();
-        walkBody(ast.program().body(), fileName, sites);
-        if (pyAst != null) {
-            enrichFromPythonAst(sites, pyAst, fileName, sourcePath);
+        return collect(ast, fileName, pyAst, sourcePath, null);
+    }
+
+    /**
+     * Prefer a precomputed {@link PythonInferenceResult} so sites share the same
+     * call-site / container facts as {@code infer}/{@code stub}.
+     */
+    public List<Map<String, Object>> collect(PythonInferenceResult inference) {
+        if (inference == null) {
+            throw new IllegalArgumentException("inference");
         }
-        return sites;
+        return collect(
+                inference.gcpAst(),
+                inference.fileName() != null ? inference.fileName() : "main.py",
+                inference.pyAst(),
+                inference.sourcePath(),
+                inference);
+    }
+
+    public List<Map<String, Object>> collect(AST ast, String fileName, Map<String, Object> pyAst,
+                                            Path sourcePath, PythonInferenceResult inference) {
+        sharedInference = inference;
+        try {
+            List<Map<String, Object>> sites = new ArrayList<>();
+            walkBody(ast.program().body(), fileName, sites);
+            if (pyAst != null) {
+                if (sharedInference == null) {
+                    sharedInference = new PythonSemanticRefiner().refine(ast, pyAst, fileName, sourcePath);
+                }
+                enrichFromPythonAst(sites, pyAst, fileName, sourcePath);
+                applySharedContainerElements(sites, fileName);
+            }
+            return sites;
+        } finally {
+            sharedInference = null;
+        }
     }
 
     public String toJson(List<Map<String, Object>> sites) throws IOException {
@@ -362,11 +395,47 @@ public class TypeEvalPySiteExporter {
     private void ensureFunctionSitesFromPyAst(List<Map<String, Object>> sites,
                                               Map<String, Object> pyModule,
                                               String fileName) {
-        // callee → positional arg types for the best observed Call
-        Map<String, List<List<String>>> callArgTypes = collectCallArgTypes(pyModule);
+        Map<String, List<List<String>>> callArgTypes =
+                sharedInference != null
+                        ? sharedInference.callSiteArgTypes()
+                        : PythonSemanticRefiner.collectCallArgTypes(pyModule);
         java.util.Set<String> classNames = collectClassNames(pyModule);
         for (Map<String, Object> stmt : PyConverter.listOf(pyModule, "body")) {
             ensureFunctionsInStmt(sites, stmt, fileName, null, callArgTypes, classNames);
+        }
+    }
+
+    /** Fill missing element LVs from the shared semantic layer (literal keys only). */
+    private void applySharedContainerElements(List<Map<String, Object>> sites, String fileName) {
+        if (sharedInference == null) return;
+        for (Map.Entry<String, List<String>> e : sharedInference.containerElements().entrySet()) {
+            String path = e.getKey();
+            List<String> types = e.getValue();
+            if (path == null || types == null || types.isEmpty()) continue;
+            boolean present = false;
+            for (Map<String, Object> s : sites) {
+                if (path.equals(s.get("variable"))) {
+                    present = true;
+                    break;
+                }
+            }
+            if (present) continue;
+            // Locate base binder LV for line/col; fall back to module top.
+            String base = path;
+            int bracket = path.indexOf('[');
+            if (bracket > 0) base = path.substring(0, bracket);
+            int line = 1;
+            int col0 = 0;
+            for (Map<String, Object> s : sites) {
+                if (base.equals(s.get("variable"))) {
+                    Object ln = s.get("line_number");
+                    Object c = s.get("col_offset");
+                    if (ln instanceof Integer i) line = i;
+                    if (c instanceof Integer i) col0 = Math.max(0, i - 1);
+                    break;
+                }
+            }
+            addLv(sites, fileName, line, col0, path, types);
         }
     }
 
@@ -2430,95 +2499,9 @@ public class TypeEvalPySiteExporter {
         return findFunctionInSites(sites, id);
     }
 
-    private Map<String, List<List<String>>> collectCallArgTypes(Map<String, Object> pyModule) {
-        Map<String, List<List<String>>> out = new HashMap<>();
-        walkCallsForArgTypes(pyModule, out);
-        return out;
-    }
-
-    private void walkCallsForArgTypes(Map<String, Object> node, Map<String, List<List<String>>> out) {
-        if (node == null || node.isEmpty()) return;
-        if ("Call".equals(PyConverter.typeOf(node))) {
-            Map<String, Object> func = PyConverter.mapOf(node, "func");
-            String callee = null;
-            if ("Name".equals(PyConverter.typeOf(func))) {
-                callee = PyConverter.strOf(func, "id");
-            } else if ("Attribute".equals(PyConverter.typeOf(func))) {
-                callee = PyConverter.strOf(func, "attr");
-            }
-            if (callee != null) {
-                List<List<String>> args = new ArrayList<>();
-                for (Map<String, Object> arg : PyConverter.listOf(node, "args")) {
-                    List<String> t = literalType(arg);
-                    if (t.isEmpty() || t.equals(List.of("callable"))) {
-                        if ("Name".equals(PyConverter.typeOf(arg))) {
-                            String id = PyConverter.strOf(arg, "id");
-                            if (id != null && !id.isEmpty() && Character.isUpperCase(id.charAt(0))) {
-                                t = List.of(id);
-                            } else {
-                                t = List.of();
-                            }
-                        } else if ("Attribute".equals(PyConverter.typeOf(arg))) {
-                            // self.c / obj.factory — leave empty; class-name guess fills FP
-                            t = List.of();
-                        } else if ("Call".equals(PyConverter.typeOf(arg))) {
-                            // B(self.c) / C() — nominal ctor
-                            t = literalType(arg);
-                            if (t.equals(List.of("callable"))) t = List.of();
-                            // square(add(2,3)) / square(add(2.1,3.2)) — nested numeric
-                            if (t.isEmpty()) {
-                                if (exprIntroducesFloat(arg)) t = List.of("float");
-                                else if (exprOnlyInts(arg)) t = List.of("int");
-                            }
-                        } else {
-                            t = List.of();
-                        }
-                    }
-                    args.add(t);
-                }
-                // Union arg types across all call sites (composition int+float).
-                List<List<String>> prev = out.get(callee);
-                if (prev == null) {
-                    out.put(callee, args);
-                } else {
-                    int n = Math.max(prev.size(), args.size());
-                    List<List<String>> merged = new ArrayList<>();
-                    for (int i = 0; i < n; i++) {
-                        List<String> a = i < prev.size() ? prev.get(i) : List.of();
-                        List<String> b = i < args.size() ? args.get(i) : List.of();
-                        merged.add(unionTypes(a, b));
-                    }
-                    out.put(callee, merged);
-                }
-            }
-        }
-        for (Object v : node.values()) {
-            if (v instanceof Map<?, ?> m) {
-                @SuppressWarnings("unchecked")
-                Map<String, Object> child = (Map<String, Object>) m;
-                walkCallsForArgTypes(child, out);
-            } else if (v instanceof List<?> list) {
-                for (Object o : list) {
-                    if (o instanceof Map<?, ?> m) {
-                        @SuppressWarnings("unchecked")
-                        Map<String, Object> child = (Map<String, Object>) m;
-                        walkCallsForArgTypes(child, out);
-                    }
-                }
-            }
-        }
-    }
-
     private List<List<String>> bestCallArgTypes(Map<String, List<List<String>>> callArgTypes,
                                                 String qname, String bare, String className) {
-        List<List<String>> hits = callArgTypes.get(bare);
-        if ((hits == null || hits.isEmpty()) && className != null) {
-            hits = callArgTypes.get(className); // Person(...) → __init__ params
-        }
-        if ((hits == null || hits.isEmpty()) && qname != null) {
-            hits = callArgTypes.get(qname);
-        }
-        return hits != null ? hits : List.of();
+        return PythonSemanticRefiner.bestCallArgTypes(callArgTypes, qname, bare, className);
     }
 
     private static boolean bodyHasAugAssign(Map<String, Object> func) {

@@ -63,6 +63,17 @@ public class PythonAnnotationWriter {
     }
 
     /**
+     * Produce an annotated copy using a shared {@link PythonInferenceResult}
+     * (call-site param hints + GCP outlines).
+     */
+    public String annotate(String originalSource, PythonInferenceResult result) {
+        if (result == null) {
+            throw new IllegalArgumentException("result");
+        }
+        return annotate(originalSource, result.gcpAst(), result.annotationHints());
+    }
+
+    /**
      * Produce an annotated copy of {@code originalSource} using types from {@code ast}.
      */
     public String annotate(String originalSource, AST ast) {
