@@ -13,6 +13,7 @@ import org.twelve.gcp.node.statement.Statement;
 import org.twelve.gcp.node.statement.VariableDeclarator;
 import org.twelve.gcp.outline.Outline;
 import org.twelve.gcp.outline.adt.Entity;
+import org.twelve.gcp.outline.adt.ProductADT;
 import org.twelve.gcp.outline.primitive.ANY;
 import org.twelve.gcp.outline.projectable.Function;
 import org.twelve.gcp.outline.projectable.Genericable;
@@ -290,7 +291,8 @@ class MeridianPlaygroundTest {
 
     /**
      * definedToBe (object) 案例：{@code obj.name} 属性被直接读取，
-     * GCP 将 {@code obj.definedToBe = Entity({name: Genericable})} 作为结构约束。
+     * GCP 将 {@code obj.definedToBe = Entity({name: Genericable})} 作为 ProductADT 结构约束
+     * （open {@link Entity} 是 {@link ProductADT} 的一种）。
      *
      * <p>GCP 的 {@link org.twelve.gcp.inference.MemberAccessorInference} 在泛型路径下，
      * 当 host 是 {@link Genericable} 时，自动将被访问的成员添加到 {@code definedToBe}
@@ -334,11 +336,13 @@ class MeridianPlaygroundTest {
         System.out.printf("  obj.definedToBe = %s%n", defined);
         System.out.printf("  obj.hasToBe     = %s%n", generic.hasToBe());
 
-        // definedToBe 必须是 Entity 类型（从 obj.name 成员访问推导）
+        // definedToBe 必须是 ProductADT（open entity 场景下为 Entity）
         assertFalse(defined instanceof ANY,
-                "obj.definedToBe 应从 ANY 变成 Entity 类型约束，当前: " + defined);
+                "obj.definedToBe 应从 ANY 变成 ProductADT 类型约束，当前: " + defined);
+        assertInstanceOf(ProductADT.class, defined,
+                "obj.definedToBe 应是 ProductADT，当前: " + defined);
         assertInstanceOf(Entity.class, defined,
-                "obj.definedToBe 应是 Entity，当前: " + defined);
+                "open object params refine an Entity ProductADT，当前: " + defined);
 
         Entity entity = (Entity) defined;
         boolean hasNameMember = entity.members().stream()
@@ -378,8 +382,10 @@ class MeridianPlaygroundTest {
         section("definedToBe (object) — p.x and p.y in body → Entity({x, y})");
         System.out.printf("  p.definedToBe = %s%n", defined);
 
+        assertInstanceOf(ProductADT.class, defined,
+                "p.definedToBe 应是 ProductADT，当前: " + defined);
         assertInstanceOf(Entity.class, defined,
-                "p.definedToBe 应是 Entity，当前: " + defined);
+                "open object params refine an Entity ProductADT，当前: " + defined);
         Entity entity = (Entity) defined;
 
         boolean hasX = entity.members().stream().anyMatch(m -> "x".equals(m.name()));
@@ -426,9 +432,11 @@ class MeridianPlaygroundTest {
 
         // GCP 必须识别出 ent 的成员访问模式
         assertFalse(defined instanceof org.twelve.gcp.outline.primitive.ANY,
-                "ent.definedToBe 应从 ANY 变成 Entity 约束，当前: " + defined);
+                "ent.definedToBe 应从 ANY 变成 ProductADT 约束，当前: " + defined);
+        assertInstanceOf(ProductADT.class, defined,
+                "ent.definedToBe 应是 ProductADT，当前: " + defined);
         assertInstanceOf(Entity.class, defined,
-                "ent.definedToBe 应是 Entity，当前: " + defined);
+                "open object params refine an Entity ProductADT，当前: " + defined);
 
         Entity entity = (Entity) defined;
         boolean hasName = entity.members().stream().anyMatch(m -> "name".equals(m.name()));
