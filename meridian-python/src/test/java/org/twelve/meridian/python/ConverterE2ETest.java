@@ -1430,13 +1430,25 @@ class ConverterE2ETest {
         Path barePath = workDir.resolve(bareModName + ".py");
         Files.writeString(barePath, bare, StandardCharsets.UTF_8);
 
-        AST[] asts = crossModuleInferencer.inferWithContext(bare, calls);
-        String annotated = new PythonAnnotationWriter().annotate(bare, asts[0], asts[1]);
+        PythonInferencer.ContextInferResult ctx =
+                crossModuleInferencer.inferWithContextDetailed(bare, calls);
+        PythonAnnotationWriter writer = new PythonAnnotationWriter()
+                .withPolicy(AnnotationPolicy.ALL_CONCRETE);
+        String annotated = writer.annotate(bare, ctx);
+
+        // Annotate the imported utils module from its own call sites (via wrappers).
+        PythonInferencer utilsInf = new PythonInferencer();
+        PythonInferencer.ContextInferResult utilsCtx = utilsInf.inferWithContextDetailed(
+                utilsSource, "fast_sum(1000)\nfast_sum(500)\n");
+        String annotatedUtils = writer.annotate(utilsSource, utilsCtx);
 
         section("[cross_module] annotated source");
         System.out.println(annotated);
+        System.out.println("--- utils ---\n" + annotatedUtils);
         assertTrue(annotated.contains("n: int"),
                 "GCP must infer 'n: int' for the wrapper functions");
+        assertTrue(annotatedUtils.contains("n: int"),
+                "GCP must infer 'n: int' for utils.fast_sum");
 
         Path annPath = workDir.resolve(annModName + ".py");
         Files.writeString(annPath, annotated, StandardCharsets.UTF_8);
@@ -1450,16 +1462,23 @@ class ConverterE2ETest {
         Files.copy(barePath, bareDir.resolve(barePath.getFileName()), StandardCopyOption.REPLACE_EXISTING);
         Files.copy(annPath,  annDir.resolve(annPath.getFileName()),   StandardCopyOption.REPLACE_EXISTING);
 
-        // The bare source imports 'utils' — provide a stub so mypyc resolves it
-        String utilsStub = utilsSource;
-        Files.writeString(bareDir.resolve("utils.py"), utilsStub, StandardCharsets.UTF_8);
-        Files.writeString(annDir.resolve("utils.py"),  utilsStub, StandardCharsets.UTF_8);
+        // Bare keeps untyped utils; annotated side uses fully typed utils for mypyc gains.
+        Files.writeString(bareDir.resolve("utils.py"), utilsSource, StandardCharsets.UTF_8);
+        Files.writeString(annDir.resolve("utils.py"),  annotatedUtils, StandardCharsets.UTF_8);
 
+        // Bare: compile only the wrapper (utils stays pure Python / untyped).
+        // Annotated: compile wrapper + typed utils together for a native import edge.
+        // Do NOT copy both utils.so into the same workDir — they would clobber each other.
         ExecutorService pool = Executors.newFixedThreadPool(2);
         Future<MypycRunner.CompileResult> bareFut =
-                pool.submit(() -> runner.compile(bareDir.resolve(barePath.getFileName()).toFile(), bareDir.toFile()));
+                pool.submit(() -> runner.compile(
+                        bareDir.resolve(barePath.getFileName()).toFile(), bareDir.toFile()));
         Future<MypycRunner.CompileResult> annFut  =
-                pool.submit(() -> runner.compile(annDir.resolve(annPath.getFileName()).toFile(),  annDir.toFile()));
+                pool.submit(() -> runner.compile(
+                        List.of(annDir.resolve(annPath.getFileName()).toFile(),
+                                annDir.resolve("utils.py").toFile()),
+                        annDir.toFile(),
+                        annDir.resolve(annPath.getFileName()).toFile()));
         pool.shutdown();
         pool.awaitTermination(5, TimeUnit.MINUTES);
 
@@ -1468,11 +1487,12 @@ class ConverterE2ETest {
         assertTrue(bareRes.success(), "mypyc must compile bare cross-module source:\n" + bareRes.stderr());
         assertTrue(annRes.success(),  "mypyc must compile GCP-annotated cross-module source:\n" + annRes.stderr());
 
-        Files.copy(bareRes.outputFile().toPath(), workDir.resolve(bareRes.outputFile().getName()), StandardCopyOption.REPLACE_EXISTING);
-        Files.copy(annRes.outputFile().toPath(),  workDir.resolve(annRes.outputFile().getName()),  StandardCopyOption.REPLACE_EXISTING);
+        Files.copy(bareRes.outputFile().toPath(),
+                workDir.resolve(bareRes.outputFile().getName()), StandardCopyOption.REPLACE_EXISTING);
+        copyCompiledNative(annDir, workDir);
 
         // Run benchmark (utils.py must be present for CPython import)
-        Files.writeString(workDir.resolve("utils.py"), utilsStub, StandardCharsets.UTF_8);
+        Files.writeString(workDir.resolve("utils.py"), utilsSource, StandardCharsets.UTF_8);
         String casesJson = buildCasesJson(cases);
         Path benchScript = workDir.resolve("generic_benchmark.py");
         try (InputStream is = getClass().getClassLoader().getResourceAsStream("generic_benchmark.py")) {
@@ -1938,8 +1958,11 @@ class ConverterE2ETest {
         // ── Step 2: GCP demand-driven inference ───────────────────────────────
         section("[" + label + "] Step 2 — GCP demand-driven inference");
         PythonInferencer inferencer = new PythonInferencer();
-        AST[] asts = inferencer.inferWithContext(bareSource, callsSource);
-        String annotated = new PythonAnnotationWriter().annotate(bareSource, asts[0], asts[1]);
+        PythonInferencer.ContextInferResult ctx =
+                inferencer.inferWithContextDetailed(bareSource, callsSource);
+        String annotated = new PythonAnnotationWriter()
+                .withPolicy(AnnotationPolicy.ALL_CONCRETE)
+                .annotate(bareSource, ctx);
 
         assertNotNull(annotated, "PythonAnnotationWriter must produce non-null result");
         assertFalse(annotated.isBlank(), "Annotated source must not be empty");
@@ -2050,6 +2073,18 @@ class ConverterE2ETest {
     }
 
     // ── helpers ───────────────────────────────────────────────────────────────
+
+    /** Copy every native extension produced by mypyc (modules + shared *__mypyc). */
+    private static void copyCompiledNative(Path fromDir, Path toDir) throws IOException {
+        try (var stream = Files.list(fromDir)) {
+            for (Path p : stream.toList()) {
+                String name = p.getFileName().toString();
+                if (name.endsWith(".so") || name.endsWith(".pyd")) {
+                    Files.copy(p, toDir.resolve(name), StandardCopyOption.REPLACE_EXISTING);
+                }
+            }
+        }
+    }
 
     private static String buildCasesJson(List<BenchCase> cases) {
         StringBuilder sb = new StringBuilder("[");

@@ -18,13 +18,20 @@ Each row: func, cpython_ns, mypyc_bare_ns, mypyc_gcp_ns,
           speedup_bare (cpython / mypyc_bare),
           speedup_gcp  (cpython / mypyc_gcp),
           cv_gcp_pct   (coefficient of variation % of the 5 GCP timing samples).
+
+Dependency isolation: helper modules (e.g. utils.so) must not be shared across
+the three lanes. CPython and mypyc(bare) see only .py helpers; mypyc(GCP) sees
+annotated native extensions. Otherwise CPython can import a typed utils.so and
+erase the measured speedup.
 """
 
 import importlib.util
 import json
 import math
 import os
+import shutil
 import sys
+import tempfile
 import time
 
 
@@ -51,6 +58,37 @@ def _find_so(directory: str, module_prefix: str) -> str | None:
         if f.startswith(module_prefix) and (f.endswith(".so") or f.endswith(".pyd"))
     ]
     return os.path.join(directory, candidates[0]) if candidates else None
+
+
+def _is_native(name: str) -> bool:
+    return name.endswith(".so") or name.endswith(".pyd")
+
+
+def _sandbox(work_dir: str, *, so_prefixes: list[str] | None) -> str:
+    """
+    Copy a lane-specific view of work_dir into a temp sandbox.
+
+    so_prefixes:
+      None  → copy no native extensions (CPython lane: .py only)
+      list  → copy .so/.pyd whose basename starts with any prefix, plus all
+              *__mypyc* shared libs when any native file is included
+    Always copies every .py file.
+    """
+    d = tempfile.mkdtemp(prefix="meridian_bench_")
+    include_mypyc = so_prefixes is not None
+    for name in os.listdir(work_dir):
+        src = os.path.join(work_dir, name)
+        if not os.path.isfile(src):
+            continue
+        if name.endswith(".py"):
+            shutil.copy2(src, os.path.join(d, name))
+            continue
+        if so_prefixes is None or not _is_native(name):
+            continue
+        if any(name.startswith(p) for p in so_prefixes) or (
+                include_mypyc and "__mypyc" in name):
+            shutil.copy2(src, os.path.join(d, name))
+    return d
 
 
 # ── micro-benchmark ────────────────────────────────────────────────────────────
@@ -88,6 +126,7 @@ def main():
         sys.exit(1)
 
     work_dir, bare_mod, ann_mod, cases_json = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+    work_dir = os.path.abspath(work_dir)
 
     try:
         cases = json.loads(cases_json)
@@ -114,60 +153,106 @@ def main():
         print(json.dumps({"error": f"no .so for annotated module '{ann_mod}' in {work_dir}"}), file=sys.stderr)
         sys.exit(1)
 
-    # ── load all three versions ───────────────────────────────────────────────
-    py_mod      = _load_py(bare_py, bare_mod + "__cpython")
-    bare_so_mod = _load_so(bare_so, bare_mod)
-    ann_so_mod  = _load_so(ann_so,  ann_mod)
-
-    # ── run benchmarks ────────────────────────────────────────────────────────
-    rows = []
-    for entry in cases:
-        fn_name, args_list, iters = entry[0], entry[1], entry[2]
-        args = tuple(args_list)
-
-        py_fn   = getattr(py_mod,      fn_name, None)
-        bare_fn = getattr(bare_so_mod, fn_name, None)
-        ann_fn  = getattr(ann_so_mod,  fn_name, None)
-
-        if py_fn is None or bare_fn is None or ann_fn is None:
-            missing = [n for n, f in [(bare_mod, bare_fn), (ann_mod, ann_fn), ("cpython", py_fn)] if f is None]
-            rows.append({"func": f"{fn_name}({', '.join(str(a) for a in args)})",
-                         "error": f"function not found in: {missing}"})
+    # Collect non-primary native helpers (utils.so, shared __mypyc, …) for the
+    # GCP lane. Bare lane deliberately excludes them so it keeps pure-Python deps.
+    helper_prefixes = []
+    for name in os.listdir(work_dir):
+        if not _is_native(name):
             continue
+        if name.startswith(bare_mod) or name.startswith(ann_mod):
+            continue
+        # prefix = name up to first '.' (module basename)
+        helper_prefixes.append(name.split(".", 1)[0])
+    # Deduplicate while preserving order
+    seen = set()
+    helper_prefixes = [p for p in helper_prefixes if not (p in seen or seen.add(p))]
 
-        # Verify correctness: all three versions must return the same result
-        correct = False
-        try:
-            py_result   = py_fn(*args)
-            bare_result = bare_fn(*args)
-            ann_result  = ann_fn(*args)
-            if py_result != bare_result or py_result != ann_result:
-                rows.append({"func": fn_name, "correct": False, "error":
-                    f"result mismatch: cpython={py_result}, bare={bare_result}, gcp={ann_result}"})
+    # ── load three isolated lanes ─────────────────────────────────────────────
+    # Keep sandboxes alive until after timing — extension modules stay mapped to
+    # these paths. CPython / bare must not see helper .so files (e.g. utils.so).
+    py_dir = _sandbox(work_dir, so_prefixes=None)
+    bare_dir = _sandbox(work_dir, so_prefixes=[bare_mod])
+    ann_dir = _sandbox(work_dir, so_prefixes=[ann_mod] + helper_prefixes)
+
+    try:
+        sys.path.insert(0, py_dir)
+        py_mod = _load_py(os.path.join(py_dir, bare_mod + ".py"), bare_mod + "__cpython")
+        # Drop helper modules so the next lane can re-import them independently.
+        for name in list(sys.modules):
+            if name == bare_mod + "__cpython":
                 continue
-            correct = True
-        except Exception as e:
-            rows.append({"func": fn_name, "correct": False, "error": f"execution error: {e}"})
-            continue
+            mod = sys.modules[name]
+            f = getattr(mod, "__file__", None)
+            if f and os.path.realpath(f).startswith(os.path.realpath(py_dir) + os.sep):
+                del sys.modules[name]
+        sys.path.remove(py_dir)
 
-        cpython_ns, cv_cpython = _bench(py_fn,   args, iters)
-        bare_ns,    cv_bare    = _bench(bare_fn, args, iters)
-        gcp_ns,     cv_gcp     = _bench(ann_fn,  args, iters)
+        sys.path.insert(0, bare_dir)
+        bare_so_mod = _load_so(_find_so(bare_dir, bare_mod), bare_mod)
+        for name in list(sys.modules):
+            if name == bare_mod:
+                continue
+            mod = sys.modules[name]
+            f = getattr(mod, "__file__", None)
+            if f and os.path.realpath(f).startswith(os.path.realpath(bare_dir) + os.sep):
+                del sys.modules[name]
+        sys.path.remove(bare_dir)
 
-        rows.append({
-            "func":          f"{fn_name}({', '.join(str(a) for a in args)})",
-            "correct":       correct,
-            "cpython_ns":    round(cpython_ns, 1),
-            "mypyc_bare_ns": round(bare_ns,    1),
-            "mypyc_gcp_ns":  round(gcp_ns,     1),
-            "speedup_bare":  round(cpython_ns / bare_ns if bare_ns > 0 else 0.0, 2),
-            "speedup_gcp":   round(cpython_ns / gcp_ns  if gcp_ns  > 0 else 0.0, 2),
-            "cv_cpython_pct": cv_cpython,
-            "cv_bare_pct":    cv_bare,
-            "cv_gcp_pct":     cv_gcp,
-        })
+        sys.path.insert(0, ann_dir)
+        ann_so_mod = _load_so(_find_so(ann_dir, ann_mod), ann_mod)
 
-    print(json.dumps({"rows": rows}))
+        # ── run benchmarks ────────────────────────────────────────────────────
+        rows = []
+        for entry in cases:
+            fn_name, args_list, iters = entry[0], entry[1], entry[2]
+            args = tuple(args_list)
+
+            py_fn   = getattr(py_mod,      fn_name, None)
+            bare_fn = getattr(bare_so_mod, fn_name, None)
+            ann_fn  = getattr(ann_so_mod,  fn_name, None)
+
+            if py_fn is None or bare_fn is None or ann_fn is None:
+                missing = [n for n, f in [(bare_mod, bare_fn), (ann_mod, ann_fn), ("cpython", py_fn)] if f is None]
+                rows.append({"func": f"{fn_name}({', '.join(str(a) for a in args)})",
+                             "error": f"function not found in: {missing}"})
+                continue
+
+            # Verify correctness: all three versions must return the same result
+            correct = False
+            try:
+                py_result   = py_fn(*args)
+                bare_result = bare_fn(*args)
+                ann_result  = ann_fn(*args)
+                if py_result != bare_result or py_result != ann_result:
+                    rows.append({"func": fn_name, "correct": False, "error":
+                        f"result mismatch: cpython={py_result}, bare={bare_result}, gcp={ann_result}"})
+                    continue
+                correct = True
+            except Exception as e:
+                rows.append({"func": fn_name, "correct": False, "error": f"execution error: {e}"})
+                continue
+
+            cpython_ns, cv_cpython = _bench(py_fn,   args, iters)
+            bare_ns,    cv_bare    = _bench(bare_fn, args, iters)
+            gcp_ns,     cv_gcp     = _bench(ann_fn,  args, iters)
+
+            rows.append({
+                "func":          f"{fn_name}({', '.join(str(a) for a in args)})",
+                "correct":       correct,
+                "cpython_ns":    round(cpython_ns, 1),
+                "mypyc_bare_ns": round(bare_ns,    1),
+                "mypyc_gcp_ns":  round(gcp_ns,     1),
+                "speedup_bare":  round(cpython_ns / bare_ns if bare_ns > 0 else 0.0, 2),
+                "speedup_gcp":   round(cpython_ns / gcp_ns  if gcp_ns  > 0 else 0.0, 2),
+                "cv_cpython_pct": cv_cpython,
+                "cv_bare_pct":    cv_bare,
+                "cv_gcp_pct":     cv_gcp,
+            })
+
+        print(json.dumps({"rows": rows}))
+    finally:
+        for d in (py_dir, bare_dir, ann_dir):
+            shutil.rmtree(d, ignore_errors=True)
 
 
 if __name__ == "__main__":

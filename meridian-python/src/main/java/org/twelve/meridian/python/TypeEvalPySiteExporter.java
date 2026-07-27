@@ -676,6 +676,10 @@ public class TypeEvalPySiteExporter {
                 ret = unionTypes(ret, guessed);
             }
         }
+        // Int-only call sites collapse Number / Union[int,float] FR noise.
+        if (ret.contains("int") && ret.contains("float") && callArgsAreIntOnly(observed)) {
+            ret = List.of("int");
+        }
         if (!ret.isEmpty()) {
             forceEnsureFr(sites, fileName, line, nameCol, qname, ret);
             if (defCol >= 0 && defCol != nameCol) {
@@ -3027,6 +3031,19 @@ public class TypeEvalPySiteExporter {
         return out;
     }
 
+    private static boolean callArgsAreIntOnly(List<List<String>> observed) {
+        if (observed == null || observed.isEmpty()) return false;
+        boolean any = false;
+        for (List<String> slot : observed) {
+            if (slot == null || slot.isEmpty()) continue;
+            any = true;
+            if (!(slot.equals(List.of("int")) || (slot.size() == 1 && "int".equals(slot.getFirst())))) {
+                return false;
+            }
+        }
+        return any;
+    }
+
     /** Prefer structural adapter guesses over GCP float/operator unions. */
     private static boolean preferGuessedReturn(List<String> guessed, List<String> current,
                                                Map<String, Object> func) {
@@ -3034,6 +3051,13 @@ public class TypeEvalPySiteExporter {
         if (guessed.contains("str") && guessed.contains("int") && current.size() == 1) return true;
         if (guessed.contains("float") && guessed.contains("int") && current.size() == 1) return true;
         if (guessed.equals(List.of("int")) && current.equals(List.of("float"))) return true;
+        // Number / Union[int,float] collapse: int-only call evidence wins over the tower.
+        if (guessed.equals(List.of("int"))
+                && current.contains("int")
+                && current.contains("float")
+                && current.size() == 2) {
+            return true;
+        }
         if (returnsLambda(func) || returnsBareName(func)) return guessed.equals(List.of("callable"));
         return false;
     }
@@ -3394,15 +3418,8 @@ public class TypeEvalPySiteExporter {
 
     private static FunctionNode innermost(FunctionNode fn) {
         FunctionNode current = fn;
-        while (current != null && current.body() != null) {
-            FunctionNode next = null;
-            for (Node n : current.body().nodes()) {
-                if (n instanceof ReturnStatement rs
-                        && rs.expression() instanceof FunctionNode nested) {
-                    next = nested;
-                    break;
-                }
-            }
+        while (current != null) {
+            FunctionNode next = current.syntheticCurriedContinuation();
             if (next == null) return current;
             current = next;
         }
@@ -3473,6 +3490,10 @@ public class TypeEvalPySiteExporter {
                                      Map<String, Map<String, List<String>>> foreign) {
         Map<String, List<String>> frTypes = indexFrTypes(sites);
         Map<String, List<String>> varTypes = indexVarTypes(sites);
+        Map<String, List<List<String>>> callArgTypes =
+                sharedInference != null
+                        ? sharedInference.callSiteArgTypes()
+                        : PythonSemanticRefiner.collectCallArgTypes(pyModule);
         // Pre-bind imported callables' return chains: func() → concrete type.
         for (Map.Entry<String, String> e : importAliases.entrySet()) {
             String local = e.getKey();
@@ -3493,7 +3514,7 @@ public class TypeEvalPySiteExporter {
         for (Map<String, Object> stmt : PyConverter.listOf(pyModule, "body")) {
             emitLambdaAssign(sites, stmt, fileName, frTypes);
             emitInlineLambdasInExpr(sites, stmt, fileName);
-            emitReturnedLambdaSites(sites, stmt, fileName);
+            emitReturnedLambdaSites(sites, stmt, pyModule, fileName, callArgTypes);
             emitComprehensionTargets(sites, stmt, fileName);
             if (!"Assign".equals(PyConverter.typeOf(stmt))) continue;
             Map<String, Object> value = PyConverter.mapOf(stmt, "value");
@@ -4449,24 +4470,28 @@ public class TypeEvalPySiteExporter {
         return List.of("int");
     }
 
-    /** return lambda x: … — FR/func at lambda param col with numeric union (return_lambda). */
+    /**
+     * Project a returned lambda's parameters from calls through binders of the
+     * factory result: {@code f = factory(); f(1); f(1.5)}.
+     */
     private void emitReturnedLambdaSites(List<Map<String, Object>> sites,
                                          Map<String, Object> stmt,
-                                         String fileName) {
+                                         Map<String, Object> pyModule,
+                                         String fileName,
+                                         Map<String, List<List<String>>> callArgTypes) {
         if (!"FunctionDef".equals(PyConverter.typeOf(stmt))
                 && !"AsyncFunctionDef".equals(PyConverter.typeOf(stmt))) {
             return;
         }
         String fname = PyConverter.strOf(stmt, "name");
+        List<List<String>> observed = observedReturnedCallableArgs(pyModule, fname, callArgTypes);
         for (Map<String, Object> body : PyConverter.listOf(stmt, "body")) {
             if (!"Return".equals(PyConverter.typeOf(body))) continue;
             Map<String, Object> value = PyConverter.mapOf(body, "value");
             if (!"Lambda".equals(PyConverter.typeOf(value))) continue;
-            // return_lambda GT: FR/func at param col is int|float; FR/lambda is int when
-            // only int calls exist (lambdas/return_call).
-            List<String> funcParamTypes = List.of("float", "int");
-            List<String> lambdaTypes = List.of("int");
+            List<String> fallback = lambdaParamTypes(value);
             Map<String, Object> args = PyConverter.mapOf(value, "args");
+            int index = 0;
             for (Map<String, Object> arg : PyConverter.listOf(args, "args")) {
                 int line = PyConverter.lineOf(arg);
                 int col = PyConverter.colOf(arg);
@@ -4474,9 +4499,13 @@ public class TypeEvalPySiteExporter {
                     line = PyConverter.lineOf(value);
                     col = PyConverter.colOf(value);
                 }
-                forceEnsureFr(sites, fileName, line, col, fname, funcParamTypes);
-                upsertLv(sites, fileName, line, col, PyConverter.strOf(arg, "arg"), funcParamTypes);
-                forceEnsureFr(sites, fileName, line, col, "lambda", lambdaTypes);
+                List<String> paramTypes = index < observed.size() && !observed.get(index).isEmpty()
+                        ? observed.get(index)
+                        : fallback;
+                forceEnsureFr(sites, fileName, line, col, fname, paramTypes);
+                forceUpsertLv(sites, fileName, line, col, PyConverter.strOf(arg, "arg"), paramTypes);
+                forceEnsureFr(sites, fileName, line, col, "lambda", fallback);
+                index++;
             }
             // Enclosing function returns the lambda object
             int fl = PyConverter.lineOf(stmt);
@@ -4487,6 +4516,34 @@ public class TypeEvalPySiteExporter {
                 forceEnsureFr(sites, fileName, fl, defCol, fname, List.of("callable"));
             }
         }
+    }
+
+    private static List<List<String>> observedReturnedCallableArgs(
+            Map<String, Object> pyModule,
+            String factory,
+            Map<String, List<List<String>>> callArgTypes) {
+        List<List<String>> merged = new ArrayList<>();
+        if (factory == null || pyModule == null || callArgTypes == null) return merged;
+        for (Map<String, Object> stmt : PyConverter.listOf(pyModule, "body")) {
+            if (!"Assign".equals(PyConverter.typeOf(stmt))) continue;
+            Map<String, Object> value = PyConverter.mapOf(stmt, "value");
+            if (!"Call".equals(PyConverter.typeOf(value))) continue;
+            Map<String, Object> callee = PyConverter.mapOf(value, "func");
+            if (!"Name".equals(PyConverter.typeOf(callee))
+                    || !factory.equals(PyConverter.strOf(callee, "id"))) {
+                continue;
+            }
+            for (Map<String, Object> target : PyConverter.listOf(stmt, "targets")) {
+                if (!"Name".equals(PyConverter.typeOf(target))) continue;
+                List<List<String>> hit = callArgTypes.get(PyConverter.strOf(target, "id"));
+                if (hit == null) continue;
+                for (int i = 0; i < hit.size(); i++) {
+                    while (merged.size() <= i) merged.add(List.of());
+                    merged.set(i, unionTypes(merged.get(i), hit.get(i)));
+                }
+            }
+        }
+        return merged;
     }
 
     private void emitDefaultKeyDictStores(List<Map<String, Object>> sites,

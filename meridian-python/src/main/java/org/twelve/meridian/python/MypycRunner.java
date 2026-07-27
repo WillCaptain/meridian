@@ -8,7 +8,7 @@ import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
-import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 /**
  * Invokes {@code mypyc} to compile a type-annotated Python file into a native
@@ -62,15 +62,39 @@ public class MypycRunner {
      * Compile {@code sourceFile} with mypyc, placing output in {@code outputDir}.
      */
     public CompileResult compile(File sourceFile, File outputDir) throws IOException {
-        if (!sourceFile.exists()) {
-            throw new IllegalArgumentException("Source file not found: " + sourceFile);
+        return compile(List.of(sourceFile), outputDir, sourceFile);
+    }
+
+    /**
+     * Compile one or more modules together (e.g. main + imported helpers) so mypyc
+     * can generate native code for cross-module calls.
+     *
+     * @param primary the module whose {@code .so} is returned as {@link CompileResult#outputFile()}
+     */
+    public CompileResult compile(java.util.List<File> sourceFiles, File outputDir, File primary)
+            throws IOException {
+        if (sourceFiles == null || sourceFiles.isEmpty()) {
+            throw new IllegalArgumentException("sourceFiles");
         }
+        for (File sourceFile : sourceFiles) {
+            if (!sourceFile.exists()) {
+                throw new IllegalArgumentException("Source file not found: " + sourceFile);
+            }
+        }
+        if (primary == null) primary = sourceFiles.getFirst();
         outputDir.mkdirs();
 
         String mypyc = detectMypyc();
+        Path cacheDir = Files.createTempDirectory(outputDir.toPath(), ".mypy_cache_");
 
-        ProcessBuilder pb = new ProcessBuilder(mypyc, sourceFile.getAbsolutePath());
+        java.util.ArrayList<String> cmd = new java.util.ArrayList<>();
+        cmd.add(mypyc);
+        for (File sourceFile : sourceFiles) {
+            cmd.add(sourceFile.getAbsolutePath());
+        }
+        ProcessBuilder pb = new ProcessBuilder(cmd);
         pb.directory(outputDir);
+        pb.environment().put("MYPY_CACHE_DIR", cacheDir.toAbsolutePath().toString());
         pb.redirectErrorStream(false);
         Process proc = pb.start();
 
@@ -95,13 +119,21 @@ public class MypycRunner {
         String stdoutStr = new String(stdout, StandardCharsets.UTF_8);
         String stderrStr = new String(stderr, StandardCharsets.UTF_8);
 
+        File outFile = findOutputFile(outputDir, baseNameOf(primary));
+        if (outFile == null) {
+            outFile = findOutputFile(primary.getParentFile(), baseNameOf(primary));
+        }
+
         if (exitCode != 0) {
             return new CompileResult(false, null, stdoutStr, stderrStr, exitCode);
         }
-
-        // Find the output .so / .pyd file
-        File outFile = findOutputFile(outputDir, baseNameOf(sourceFile));
-        return new CompileResult(outFile != null, outFile, stdoutStr, stderrStr, exitCode);
+        if (outFile == null) {
+            return new CompileResult(false, null, stdoutStr,
+                    stderrStr + "\n(mypyc exit 0 but no .so/.pyd found for "
+                            + baseNameOf(primary) + " under " + outputDir + ")",
+                    exitCode);
+        }
+        return new CompileResult(true, outFile, stdoutStr, stderrStr, exitCode);
     }
 
     // ── full pipeline shortcut ─────────────────────────────────────────────────
@@ -109,7 +141,7 @@ public class MypycRunner {
     /**
      * Run the full meridian-python pipeline on {@code sourceFile}:
      * <ol>
-     *   <li>Infer types using GCP.</li>
+     *   <li>Infer types using GCP + semantic refine.</li>
      *   <li>Write annotated Python to a temp file.</li>
      *   <li>Compile the annotated file with mypyc.</li>
      * </ol>
@@ -117,24 +149,20 @@ public class MypycRunner {
      * @return the mypyc compilation result
      */
     public CompileResult inferAndCompile(File sourceFile) throws IOException {
-        // 1. Read source
         String source = Files.readString(sourceFile.toPath(), StandardCharsets.UTF_8);
 
-        // 2. Infer types
         PythonInferencer inferencer = new PythonInferencer();
-        var ast = inferencer.inferFile(sourceFile);
+        PythonInferencer.InferResult inferred = inferencer.inferFileDetailed(sourceFile);
 
-        // 3. Write annotated source to a temp file
         PythonAnnotationWriter writer = new PythonAnnotationWriter();
         Path tmpDir = Files.createTempDirectory("meridian_mypyc_");
         String baseName = baseNameOf(sourceFile);
         Path annotatedPath = tmpDir.resolve(baseName + "_annotated.py");
-        writer.write(source, ast, annotatedPath);
+        String annotated = writer.annotate(source, inferred.inference());
+        Files.writeString(annotatedPath, annotated, StandardCharsets.UTF_8);
 
-        // 4. Compile
         CompileResult result = compile(annotatedPath.toFile(), tmpDir.toFile());
 
-        // 5. If successful, copy the .so to the original source's directory
         if (result.success() && result.outputFile() != null) {
             Path dest = sourceFile.toPath().resolveSibling(result.outputFile().getName());
             Files.copy(result.outputFile().toPath(), dest, StandardCopyOption.REPLACE_EXISTING);
@@ -147,10 +175,8 @@ public class MypycRunner {
     // ── helpers ────────────────────────────────────────────────────────────────
 
     private static String detectMypyc() {
-        // Allow override via environment variable
         String env = System.getenv("MYPYC_BIN");
         if (env != null && !env.isBlank()) return env;
-        // Try common locations
         for (String candidate : new String[]{
                 "/opt/homebrew/bin/mypyc",
                 "/usr/local/bin/mypyc",
@@ -168,13 +194,27 @@ public class MypycRunner {
     }
 
     private static File findOutputFile(File dir, String baseName) {
-        // mypyc outputs  <module>.<abi-tag>.so  or  <module>.cpython-3XX-darwin.so
-        File[] files = dir.listFiles((d, n) ->
+        if (dir == null || !dir.isDirectory()) return null;
+        File[] direct = dir.listFiles((d, n) ->
                 n.startsWith(baseName) && (n.endsWith(".so") || n.endsWith(".pyd")));
-        if (files == null || files.length == 0) return null;
-        // If multiple, pick the newest
-        return Arrays.stream(files)
-                .max(Comparator.comparingLong(File::lastModified))
-                .orElse(null);
+        if (direct != null && direct.length > 0) {
+            return Arrays.stream(direct)
+                    .max(Comparator.comparingLong(File::lastModified))
+                    .orElse(null);
+        }
+        // mypyc sometimes leaves the artifact only under build/lib.*
+        try (Stream<Path> walk = Files.walk(dir.toPath(), 4)) {
+            return walk
+                    .filter(Files::isRegularFile)
+                    .map(Path::toFile)
+                    .filter(f -> {
+                        String n = f.getName();
+                        return n.startsWith(baseName) && (n.endsWith(".so") || n.endsWith(".pyd"));
+                    })
+                    .max(Comparator.comparingLong(File::lastModified))
+                    .orElse(null);
+        } catch (IOException e) {
+            return null;
+        }
     }
 }

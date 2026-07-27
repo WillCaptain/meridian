@@ -99,17 +99,14 @@ public class PythonInferencer {
     /**
      * Parse and infer types for the given Python source code.
      *
-     * <p>If modules have been pre-registered via {@link #registerModule}, they are
-     * automatically loaded when {@code from X import Y} statements are encountered.
+     * <p>Runs the same GCP + {@link PythonSemanticRefiner} pipeline as
+     * {@link #inferDetailed(String)}; returns only the GCP AST for callers that
+     * do not need shared refine facts.
      *
      * @return the typed GCP AST (inference already applied)
      */
     public AST infer(String pythonSource) {
-        converter.setModuleLoader(moduleRegistry.isEmpty() ? null : buildLoader(null));
-        Map<String, Object> pyAst = bridge.parse(pythonSource);
-        AST ast = converter.convert(pyAst);
-        asf.infer();
-        return ast;
+        return inferDetailed(pythonSource).gcpAst();
     }
 
     /**
@@ -161,34 +158,62 @@ public class PythonInferencer {
      * a usage-context source in the same {@link ASF}.
      *
      * <p>Both ASTs are built and inferred jointly. Afterwards, the caller should use
-     * {@link PythonAnnotationWriter#annotate(String, AST, AST)} to produce annotations
-     * that include parameter types extracted from the call sites in the usage AST.
+     * {@link PythonAnnotationWriter#annotate(String, AST, AST)} or
+     * {@link #inferWithContextDetailed} + {@link PythonAnnotationWriter#annotate(String, PythonInferenceResult)}
+     * to produce annotations that include parameter types from call sites.
      *
      * @param librarySource  the library Python source (zero annotations)
      * @param usageSource    a Python snippet that calls the library with concrete arguments
      * @return a two-element array: {@code [libraryAst, usageAst]}
      */
     public AST[] inferWithContext(String librarySource, String usageSource) {
+        return inferWithContextDetailed(librarySource, usageSource).asts();
+    }
+
+    /**
+     * Like {@link #inferWithContext} but also returns a library-side
+     * {@link PythonInferenceResult} whose {@link PythonInferenceResult#annotationHints()}
+     * include call-site parameter types from the usage snippet.
+     */
+    public ContextInferResult inferWithContextDetailed(String librarySource, String usageSource) {
         converter.setModuleLoader(moduleRegistry.isEmpty() ? null : buildLoader(null));
 
-        // Library AST first — its functions must be visible when usage is processed
         Map<String, Object> libPyAst = bridge.parse(librarySource);
         AST libAst = converter.convert(libPyAst);
 
-        // Usage AST — call sites carry concrete argument types (literals → outlines)
         Map<String, Object> usagePyAst = bridge.parse(usageSource);
         AST usageAst = converter.convert(usagePyAst);
 
-        // Joint inference: GCP's ASF infers over all registered ASTs simultaneously
         asf.infer();
 
-        // Post-inference: propagate call-site argument types from the usage AST into the
-        // library's function parameter constraints (Genericable hasToBe).  This ensures that
-        // TypeAnnotationGenerator can read concrete collection types (dict, list) even when
-        // the usage snippet does not explicitly import the library function.
-        new PythonAnnotationWriter().propagateCallSiteTypes(libAst, usageAst);
+        PythonAnnotationWriter writer = new PythonAnnotationWriter();
+        writer.propagateCallSiteTypes(libAst, usageAst);
 
-        return new AST[]{libAst, usageAst};
+        PythonInferenceResult refined = new PythonSemanticRefiner().refine(
+                libAst, libPyAst, "<library>", null, moduleRegistry);
+        Map<String, String> callHints = writer.collectCallSiteHints(libAst, usageAst);
+        return new ContextInferResult(libAst, usageAst, refined, callHints);
+    }
+
+    /**
+     * Joint library+usage inference: GCP ASTs, refined library facts, and
+     * call-site annotation hints merged for {@link PythonAnnotationWriter}.
+     */
+    public record ContextInferResult(
+            AST libraryAst,
+            AST usageAst,
+            PythonInferenceResult libraryInference,
+            Map<String, String> callSiteHints) {
+        public AST[] asts() {
+            return new AST[]{libraryAst, usageAst};
+        }
+
+        /** Hints suitable for {@link PythonAnnotationWriter#annotate(String, AST, Map)}. */
+        public Map<String, String> annotationHints() {
+            Map<String, String> merged = new HashMap<>(libraryInference.annotationHints());
+            merged.putAll(callSiteHints);
+            return merged;
+        }
     }
 
     // ── pipeline shortcuts ─────────────────────────────────────────────────────

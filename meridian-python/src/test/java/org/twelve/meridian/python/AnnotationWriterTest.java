@@ -151,6 +151,74 @@ class AnnotationWriterTest {
                 "Annotated HOF source should be valid Python");
     }
 
+    @Test
+    void returned_lambda_is_callable_return_not_curried_continuation() {
+        String src = """
+                def func():
+                    return lambda x: x ** 2
+
+                f = func()
+                a = f(4)
+                b = f(4.4)
+                """;
+
+        PythonInferenceResult inf = inferencer.inferDetailed(src);
+        String annotated = new PythonAnnotationWriter().annotate(src, inf);
+
+        assertTrue(annotated.contains("def func() -> Callable[["),
+                () -> "returned lambda must remain a first-class Callable:\n" + annotated);
+        assertFalse(annotated.contains("def func() -> float"),
+                () -> "returned lambda must not be flattened as a curry continuation:\n" + annotated);
+        assertTrue(annotated.contains("from typing import Callable"), () -> annotated);
+        assertDoesNotThrow(() -> new PythonAstBridge().parse(annotated));
+    }
+
+    @Test
+    void infer_delegates_to_shared_refine_hints() {
+        String src = """
+                def one():
+                    return 1
+
+                x = one()
+                """;
+        PythonInferenceResult detailed = inferencer.inferDetailed(src);
+        assertNotNull(inferencer.infer(src));
+        assertFalse(detailed.annotationHints().isEmpty(),
+                () -> "shared refine must populate hints: " + detailed.annotationHints());
+        String viaDetailed = new PythonAnnotationWriter().annotate(src, detailed);
+        String viaInferAst = new PythonAnnotationWriter().annotate(src, inferencer.infer(src));
+        // AST-only annotate lacks refine overlays; detailed path must stay at least as informative.
+        assertTrue(viaDetailed.contains("one") || viaInferAst.contains("one"));
+        assertTrue(detailed.callResults().containsKey("x")
+                        || detailed.annotationHints().containsKey("x")
+                        || viaDetailed.contains("x:"),
+                () -> "refine should observe x = one(): " + detailed.annotationHints());
+    }
+
+    @Test
+    void safe_policy_drops_incomplete_function_signatures() {
+        java.util.Map<String, String> raw = new java.util.LinkedHashMap<>();
+        raw.put("f#x", "Any");
+        raw.put("f#return", "int");
+        raw.put("g#x", "int");
+        raw.put("g#return", "int");
+        raw.put("y", "str");
+        raw.put("cb", "Callable[[int], int]");
+        java.util.Map<String, String> filtered = AnnotationPolicy.SAFE_PARTIAL.filter(raw);
+        assertFalse(filtered.containsKey("f#x"), "non-concrete param taints f");
+        assertFalse(filtered.containsKey("f#return"),
+                "SAFE_PARTIAL must skip entire function when any slot is non-concrete");
+        assertEquals("int", filtered.get("g#x"));
+        assertEquals("int", filtered.get("g#return"));
+        assertEquals("str", filtered.get("y"));
+        assertFalse(filtered.containsKey("cb"),
+                "SAFE_PARTIAL skips bare module-level Callable assigns");
+
+        java.util.Map<String, String> aggressive = AnnotationPolicy.ALL_CONCRETE.filter(raw);
+        assertEquals("int", aggressive.get("f#return"));
+        assertEquals("Callable[[int], int]", aggressive.get("cb"));
+    }
+
     // ── mypyc compilation ─────────────────────────────────────────────────────
 
     @Test

@@ -1,5 +1,6 @@
 package org.twelve.meridian.python.cli;
 
+import org.twelve.meridian.python.AnnotationPolicy;
 import org.twelve.meridian.python.PythonAnnotationWriter;
 import org.twelve.meridian.python.PythonInferencer;
 import org.twelve.meridian.python.TypeAnnotationGenerator;
@@ -18,10 +19,13 @@ import java.util.Map;
  * Meridian product CLI.
  *
  * <pre>
- *   meridian infer  path.py [-o out.py]
+ *   meridian infer  path.py [-o out.py] [--annotate-all]
  *   meridian stub   path.py [-o out.pyi]
  *   meridian sites  path.py [-o main_result.json]
  * </pre>
+ *
+ * <p>{@code infer} defaults to {@link AnnotationPolicy#SAFE_PARTIAL} (concrete,
+ * complete signatures only). Pass {@code --annotate-all} for aggressive injection.
  */
 public final class MeridianCli {
 
@@ -57,6 +61,7 @@ public final class MeridianCli {
 
         List<String> rest = new ArrayList<>();
         Path out = null;
+        boolean annotateAll = false;
         for (int i = 1; i < args.length; i++) {
             String a = args[i];
             if ("-o".equals(a) || "--output".equals(a)) {
@@ -65,6 +70,8 @@ public final class MeridianCli {
                     return 2;
                 }
                 out = Path.of(args[++i]);
+            } else if ("--annotate-all".equals(a)) {
+                annotateAll = true;
             } else if ("-h".equals(a) || "--help".equals(a)) {
                 printHelp(System.out);
                 return 0;
@@ -76,7 +83,11 @@ public final class MeridianCli {
             }
         }
         if (rest.size() != 1) {
-            System.err.println("Usage: meridian " + cmd + " <file.py> [-o path]");
+            System.err.println("Usage: meridian " + cmd + " <file.py> [-o path] [--annotate-all]");
+            return 2;
+        }
+        if (annotateAll && !"infer".equals(cmd)) {
+            System.err.println("--annotate-all is only valid with 'infer'");
             return 2;
         }
 
@@ -87,10 +98,11 @@ public final class MeridianCli {
         }
 
         try {
+            boolean finalAnnotateAll = annotateAll;
             return switch (cmd) {
                 case "stub" -> writeStub(input, out);
                 case "sites" -> writeSites(input, out);
-                default -> writeAnnotated(input, out);
+                default -> writeAnnotated(input, out, finalAnnotateAll);
             };
         } catch (IOException e) {
             System.err.println("I/O error: " + e.getMessage());
@@ -108,11 +120,16 @@ public final class MeridianCli {
         return emit(stub, out);
     }
 
-    private static int writeAnnotated(File input, Path out) throws IOException {
+    private static int writeAnnotated(File input, Path out, boolean annotateAll) throws IOException {
         String source = Files.readString(input.toPath(), StandardCharsets.UTF_8);
         PythonInferencer inferencer = new PythonInferencer();
         PythonInferencer.InferResult inferred = inferencer.inferFileDetailed(input);
-        String annotated = new PythonAnnotationWriter().annotate(source, inferred.inference());
+        AnnotationPolicy policy = annotateAll
+                ? AnnotationPolicy.ALL_CONCRETE
+                : AnnotationPolicy.SAFE_PARTIAL;
+        String annotated = new PythonAnnotationWriter()
+                .withPolicy(policy)
+                .annotate(source, inferred.inference());
         return emit(annotated, out);
     }
 
@@ -145,7 +162,10 @@ public final class MeridianCli {
         ps.println("Meridian — GCP Python type inferencer");
         ps.println();
         ps.println("Usage:");
-        ps.println("  meridian infer <file.py> [-o out.py]            Annotate source (PEP 484)");
+        ps.println("  meridian infer <file.py> [-o out.py] [--annotate-all]");
+        ps.println("      Annotate source (PEP 484). Default is conservative (SAFE_PARTIAL):");
+        ps.println("      only concrete, complete function signatures. --annotate-all injects");
+        ps.println("      every concrete slot even when a signature is incomplete.");
         ps.println("  meridian stub  <file.py> [-o out.pyi]           Emit .pyi stub");
         ps.println("  meridian sites <file.py> [-o main_result.json]  TypeEvalPy site JSON");
         ps.println("  meridian version");

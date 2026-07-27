@@ -130,6 +130,26 @@ class TypeEvalPySiteExporterTest {
     }
 
     @Test
+    void returnedLambdaParamsFollowCallsThroughRenamedFactoryBinder() throws Exception {
+        Path py = tmp.resolve("main.py");
+        Files.writeString(py, """
+                def make_power():
+                    return lambda value: value ** 2
+
+                operation = make_power()
+                whole = operation(4)
+                decimal = operation(4.4)
+                """);
+
+        PythonInferencer.InferResult r = new PythonInferencer().inferFileDetailed(py.toFile());
+        List<Map<String, Object>> sites =
+                new TypeEvalPySiteExporter().collect(r.inference());
+
+        Map<String, Object> value = find(sites, s -> "value".equals(s.get("variable")));
+        assertEquals(List.of("float", "int"), sortedTypes(value), () -> String.valueOf(sites));
+    }
+
+    @Test
     void importedFactoryDoubleCallPeelsToConcrete() throws Exception {
         Path dir = tmp.resolve("imp");
         Files.createDirectories(dir);

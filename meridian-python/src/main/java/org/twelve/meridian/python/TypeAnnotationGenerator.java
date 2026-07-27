@@ -379,7 +379,11 @@ public class TypeAnnotationGenerator {
             if (k != null && v != null) return "dict[" + k + ", " + v + "]";
             return "dict";
         }
-        // Other Projectable outlines (Addable, OperateAble, etc.) are GCP runtime protocols,
+        // Numeric + / * towers surface as Addable — keep width instead of dropping the return.
+        if (outline instanceof org.twelve.gcp.outline.projectable.Addable) {
+            return "Union[int, float]";
+        }
+        // Other Projectable outlines (OperateAble, etc.) are GCP runtime protocols,
         // not Python types — mypyc infers the concrete type from operand types in the body
         if (outline instanceof Projectable) return null;
         if (outline instanceof UNIT) return "None";
@@ -389,7 +393,8 @@ public class TypeAnnotationGenerator {
         if (outline instanceof FLOAT)   return "float";
         if (outline instanceof DECIMAL) return "float";
         if (outline instanceof DOUBLE)  return "float";
-        if (outline instanceof NUMBER)  return "float";
+        // GCP Number is the int|float numeric tower — do not silently narrow to float.
+        if (outline instanceof NUMBER)  return "Union[int, float]";
         if (outline instanceof STRING)  return "str";
         // Named / user-defined type: use outline's semantic name
         String name = outline.name();
@@ -473,7 +478,9 @@ public class TypeAnnotationGenerator {
         if (gcpType == null) return null;
         return switch (gcpType) {
             case "Int", "Integer", "Long"   -> "int";
-            case "Float", "Double", "Decimal", "Number" -> "float";
+            case "Float", "Double", "Decimal" -> "float";
+            // Preserve numeric tower width; callers inject typing.Union when needed.
+            case "Number"                   -> "Union[int, float]";
             case "String"                   -> "str";
             case "Bool"                     -> "bool";
             case "Unit", "Nothing"          -> "None";
@@ -545,14 +552,12 @@ public class TypeAnnotationGenerator {
         return current;
     }
 
-    /** If {@code fn}'s body is a single {@code return <FunctionNode>}, return that nested node. */
+    /**
+     * Return only the continuation that GCP inserted while currying a
+     * multi-argument function. A user-written returned lambda has the same
+     * {@code return <FunctionNode>} shape, but remains the function's value.
+     */
     private static FunctionNode extractCurriedNext(FunctionNode fn) {
-        for (Node child : fn.body().nodes()) {
-            if (child instanceof ReturnStatement rs
-                    && rs.expression() instanceof FunctionNode nested) {
-                return nested;
-            }
-        }
-        return null;
+        return fn.syntheticCurriedContinuation();
     }
 }

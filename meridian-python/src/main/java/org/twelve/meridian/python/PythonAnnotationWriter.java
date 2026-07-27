@@ -45,8 +45,19 @@ import java.util.regex.Pattern;
 public class PythonAnnotationWriter {
 
     private final TypeAnnotationGenerator typeGen = new TypeAnnotationGenerator();
+    private AnnotationPolicy policy = AnnotationPolicy.defaultPolicy();
 
     // ── public API ─────────────────────────────────────────────────────────────
+
+    /** Configure which inferred annotations are injected (default {@link AnnotationPolicy#SAFE_PARTIAL}). */
+    public PythonAnnotationWriter withPolicy(AnnotationPolicy policy) {
+        this.policy = policy == null ? AnnotationPolicy.defaultPolicy() : policy;
+        return this;
+    }
+
+    public AnnotationPolicy policy() {
+        return policy;
+    }
 
     /**
      * Write type-annotated Python to {@code outputPath}.
@@ -77,6 +88,14 @@ public class PythonAnnotationWriter {
     }
 
     /**
+     * Annotate using joint library+usage inference ({@link PythonInferencer.ContextInferResult}).
+     */
+    public String annotate(String originalSource, PythonInferencer.ContextInferResult ctx) {
+        if (ctx == null) throw new IllegalArgumentException("ctx");
+        return annotate(originalSource, ctx.libraryAst(), ctx.annotationHints());
+    }
+
+    /**
      * Produce an annotated copy of {@code originalSource} using types from {@code ast}.
      */
     public String annotate(String originalSource, AST ast) {
@@ -102,6 +121,7 @@ public class PythonAnnotationWriter {
         augmentFromCallSites(nameToType, libraryAst, usageAst);
         // Remove hints for params that were resolved by call-site analysis
         nameToHint.keySet().removeIf(nameToType::containsKey);
+        nameToType = policy.filter(nameToType);
         return rewrite(originalSource, nameToType, nameToHint);
     }
 
@@ -113,7 +133,18 @@ public class PythonAnnotationWriter {
         Map<String, String> nameToType = collectInferredTypes(ast, nameToHint);
         nameToType.putAll(extraHints);
         nameToHint.keySet().removeIf(nameToType::containsKey);
+        nameToType = policy.filter(nameToType);
         return rewrite(originalSource, nameToType, nameToHint);
+    }
+
+    /**
+     * Collect call-site parameter type hints without rewriting source.
+     * Used by {@link PythonInferencer#inferWithContextDetailed}.
+     */
+    public Map<String, String> collectCallSiteHints(AST libraryAst, AST usageAst) {
+        Map<String, String> out = new LinkedHashMap<>();
+        augmentFromCallSites(out, libraryAst, usageAst);
+        return out;
     }
 
     private String rewrite(String originalSource, Map<String, String> nameToType) {
