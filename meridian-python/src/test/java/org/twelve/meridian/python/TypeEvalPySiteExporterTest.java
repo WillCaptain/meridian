@@ -5,6 +5,8 @@ import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
@@ -96,9 +98,75 @@ class TypeEvalPySiteExporterTest {
                 () -> String.valueOf(sites));
     }
 
+    @Test
+    void nestedNumericCallsSpecializePerSiteWithoutCollapsingFr() throws Exception {
+        Path py = tmp.resolve("main.py");
+        Files.writeString(py, """
+                def add(x, y):
+                    return x + y
+
+                def square(x):
+                    return x * x
+
+                a = square(add(2, 3))
+                b = square(add(2.1, 3.2))
+                """);
+
+        PythonInferencer.InferResult r = new PythonInferencer().inferFileDetailed(py.toFile());
+        List<Map<String, Object>> sites =
+                new TypeEvalPySiteExporter().collect(r.inference());
+
+        Map<String, Object> squareFr = find(sites, s -> "square".equals(s.get("function"))
+                && !s.containsKey("parameter") && !s.containsKey("variable"));
+        Map<String, Object> squareFp = find(sites, s -> "square".equals(s.get("function"))
+                && "x".equals(s.get("parameter")));
+        Map<String, Object> a = find(sites, s -> "a".equals(s.get("variable")));
+        Map<String, Object> b = find(sites, s -> "b".equals(s.get("variable")));
+
+        assertEquals(List.of("float", "int"), sortedTypes(squareFr), () -> String.valueOf(sites));
+        assertEquals(List.of("float", "int"), sortedTypes(squareFp), () -> String.valueOf(sites));
+        assertEquals(List.of("int"), sortedTypes(a), () -> String.valueOf(sites));
+        assertEquals(List.of("float"), sortedTypes(b), () -> String.valueOf(sites));
+    }
+
+    @Test
+    void nestedIntOnlyCallKeepsIntOverNumberFloat() throws Exception {
+        Path py = tmp.resolve("main.py");
+        Files.writeString(py, """
+                def add_one(x):
+                    return x + 1
+
+                def double(x):
+                    return x * 2
+
+                result = double(add_one(5))
+                """);
+
+        PythonInferencer.InferResult r = new PythonInferencer().inferFileDetailed(py.toFile());
+        List<Map<String, Object>> sites =
+                new TypeEvalPySiteExporter().collect(r.inference());
+
+        Map<String, Object> doubleFr = find(sites, s -> "double".equals(s.get("function"))
+                && !s.containsKey("parameter") && !s.containsKey("variable"));
+        Map<String, Object> doubleFp = find(sites, s -> "double".equals(s.get("function"))
+                && "x".equals(s.get("parameter")));
+        Map<String, Object> result = find(sites, s -> "result".equals(s.get("variable")));
+
+        assertEquals(List.of("int"), doubleFr.get("type"), () -> String.valueOf(sites));
+        assertEquals(List.of("int"), doubleFp.get("type"), () -> String.valueOf(sites));
+        assertEquals(List.of("int"), result.get("type"), () -> String.valueOf(sites));
+    }
+
     private static Map<String, Object> find(List<Map<String, Object>> sites,
                                             java.util.function.Predicate<Map<String, Object>> pred) {
         return sites.stream().filter(pred).findFirst()
                 .orElseThrow(() -> new AssertionError("site not found in " + sites));
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<String> sortedTypes(Map<String, Object> site) {
+        List<String> types = new ArrayList<>((List<String>) site.get("type"));
+        Collections.sort(types);
+        return types;
     }
 }

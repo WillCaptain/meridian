@@ -1330,11 +1330,20 @@ public class TypeEvalPySiteExporter {
         return true;
     }
 
-    /** square(add(2.1,3.2)) → float when FR is int|float and args introduce float. */
+    /**
+     * Per-call numeric specialization for TypeEvalPy.
+     * <ul>
+     *   <li>{@code square(add(2.1,3.2))} → float</li>
+     *   <li>{@code square(add(2,3))} → int even when FR collapsed Number→float</li>
+     * </ul>
+     * Only fires when the callee return looks numeric ({@code int} and/or {@code float}).
+     */
     private List<String> specializeNumericCall(Map<String, Object> call, List<String> ret) {
-        if (ret == null || !(ret.contains("int") && ret.contains("float"))) return List.of();
+        if (ret == null || ret.isEmpty()) return List.of();
+        boolean numeric = ret.contains("int") || ret.contains("float");
+        if (!numeric) return List.of();
         if (exprIntroducesFloat(call)) return List.of("float");
-        if (exprOnlyInts(call)) return List.of("int");
+        if (exprProvenOnlyInts(call)) return List.of("int");
         return List.of();
     }
 
@@ -1348,28 +1357,44 @@ public class TypeEvalPySiteExporter {
             for (Map<String, Object> arg : PyConverter.listOf(node, "args")) {
                 if (exprIntroducesFloat(arg)) return true;
             }
-            return exprIntroducesFloat(PyConverter.mapOf(node, "func"));
+            return false;
         }
         if ("BinOp".equals(PyConverter.typeOf(node))) {
             return exprIntroducesFloat(PyConverter.mapOf(node, "left"))
                     || exprIntroducesFloat(PyConverter.mapOf(node, "right"));
         }
+        if ("UnaryOp".equals(PyConverter.typeOf(node))) {
+            return exprIntroducesFloat(PyConverter.mapOf(node, "operand"));
+        }
         return false;
     }
 
-    private static boolean exprOnlyInts(Map<String, Object> node) {
-        if (node == null) return true;
+    /**
+     * Proven int-only expression tree (literals / nested calls / binops).
+     * Unknown names do <em>not</em> count as int — avoids {@code square(x)} → int.
+     */
+    private static boolean exprProvenOnlyInts(Map<String, Object> node) {
+        if (node == null) return false;
         if ("Constant".equals(PyConverter.typeOf(node))) {
             Object v = node.get("value");
             return v instanceof Integer || v instanceof Long;
         }
         if ("Call".equals(PyConverter.typeOf(node))) {
-            for (Map<String, Object> arg : PyConverter.listOf(node, "args")) {
-                if (!exprOnlyInts(arg)) return false;
+            List<Map<String, Object>> args = PyConverter.listOf(node, "args");
+            if (args.isEmpty()) return false;
+            for (Map<String, Object> arg : args) {
+                if (!exprProvenOnlyInts(arg)) return false;
             }
             return true;
         }
-        return true;
+        if ("BinOp".equals(PyConverter.typeOf(node))) {
+            return exprProvenOnlyInts(PyConverter.mapOf(node, "left"))
+                    && exprProvenOnlyInts(PyConverter.mapOf(node, "right"));
+        }
+        if ("UnaryOp".equals(PyConverter.typeOf(node))) {
+            return exprProvenOnlyInts(PyConverter.mapOf(node, "operand"));
+        }
+        return false;
     }
 
     /**

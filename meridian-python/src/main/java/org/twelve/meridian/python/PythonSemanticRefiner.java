@@ -156,13 +156,63 @@ public final class PythonSemanticRefiner {
             return List.of();
         }
         if ("Call".equals(PyConverter.typeOf(arg))) {
-            t = literalType(arg);
-            if (t.equals(List.of("callable"))) {
-                return List.of();
-            }
-            return t;
+            // Nested call args: square(add(2, 3)) / square(add(2.1, 3.2)) — propagate
+            // numeric literal evidence so FP/FR keep int|float across call sites.
+            if (callArgsIntroduceFloat(arg)) return List.of("float");
+            if (callArgsOnlyInts(arg)) return List.of("int");
+            return List.of();
         }
         return List.of();
+    }
+
+    /** True when any nested arg is a float literal (or a call/binop that introduces float). */
+    private static boolean callArgsIntroduceFloat(Map<String, Object> call) {
+        if (call == null || !"Call".equals(PyConverter.typeOf(call))) return false;
+        for (Map<String, Object> a : PyConverter.listOf(call, "args")) {
+            if (exprIntroducesFloatLit(a)) return true;
+        }
+        return false;
+    }
+
+    /** True when the call has ≥1 arg and every arg is proven int (literals / nested int calls). */
+    private static boolean callArgsOnlyInts(Map<String, Object> call) {
+        if (call == null || !"Call".equals(PyConverter.typeOf(call))) return false;
+        List<Map<String, Object>> args = PyConverter.listOf(call, "args");
+        if (args.isEmpty()) return false;
+        for (Map<String, Object> a : args) {
+            if (!argIsIntEvidence(a)) return false;
+        }
+        return true;
+    }
+
+    private static boolean exprIntroducesFloatLit(Map<String, Object> expr) {
+        if (expr == null) return false;
+        if (literalType(expr).equals(List.of("float"))) return true;
+        if ("Call".equals(PyConverter.typeOf(expr))) return callArgsIntroduceFloat(expr);
+        if ("BinOp".equals(PyConverter.typeOf(expr))) {
+            return exprIntroducesFloatLit(PyConverter.mapOf(expr, "left"))
+                    || exprIntroducesFloatLit(PyConverter.mapOf(expr, "right"));
+        }
+        if ("UnaryOp".equals(PyConverter.typeOf(expr))) {
+            return exprIntroducesFloatLit(PyConverter.mapOf(expr, "operand"));
+        }
+        return false;
+    }
+
+    private static boolean argIsIntEvidence(Map<String, Object> arg) {
+        if (arg == null) return false;
+        if (literalType(arg).equals(List.of("int"))) return true;
+        if ("Call".equals(PyConverter.typeOf(arg))) {
+            return callArgsOnlyInts(arg);
+        }
+        if ("UnaryOp".equals(PyConverter.typeOf(arg))) {
+            return argIsIntEvidence(PyConverter.mapOf(arg, "operand"));
+        }
+        if ("BinOp".equals(PyConverter.typeOf(arg))) {
+            return argIsIntEvidence(PyConverter.mapOf(arg, "left"))
+                    && argIsIntEvidence(PyConverter.mapOf(arg, "right"));
+        }
+        return false;
     }
 
     private static Map<String, Map<String, List<String>>> refineParamsFromCallSites(

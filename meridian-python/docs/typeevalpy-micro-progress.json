@@ -2,12 +2,12 @@
   "summary": {
     "claim_boundary": "Meridian native-Python micro progress against Outline fact_id inventory. GCP + Python harness. Primary gate is strict exact-locator pairing; compat allows locator soft-match but never uses ground-truth types to pick sites. legacy mode (expected-type disambiguation) is historical only and is not SOTA. Not Outline-port FACT_PAIRED 513/513; not Autogen README #1.",
     "total_facts_scored": 513,
-    "exact": 504,
-    "exact_rate": 0.9825,
+    "exact": 509,
+    "exact_rate": 0.9922,
     "located": 511,
     "missing_source_templates": 0,
     "template_errors": 0,
-    "elapsed_sec": 167.7,
+    "elapsed_sec": 163.6,
     "by_category": {
       "assignments": {
         "exact": 81,
@@ -25,14 +25,14 @@
         "rate": 0.9907
       },
       "direct_calls": {
-        "exact": 21,
+        "exact": 23,
         "total": 24,
-        "rate": 0.875
+        "rate": 0.9583
       },
       "functions": {
-        "exact": 34,
+        "exact": 37,
         "total": 37,
-        "rate": 0.9189
+        "rate": 1.0
       },
       "lambdas": {
         "exact": 34,
@@ -51,9 +51,9 @@
       }
     },
     "by_status": {
-      "EXACT": 504,
+      "EXACT": 509,
       "MISS_LOCATION": 2,
-      "MISS_TYPE": 7
+      "MISS_TYPE": 2
     },
     "scoring_mode": "strict",
     "outline_manifest": "/Users/imac/Documents/code/github/outline/outline/src/test/java/org/twelve/outline/toplas/TYPEEVALPY-FACT-MANIFEST.csv",
@@ -62,23 +62,23 @@
     "uses_expected_types_for_pairing": false,
     "modes": {
       "strict": {
-        "exact": 504,
-        "exact_rate": 0.9825,
+        "exact": 509,
+        "exact_rate": 0.9922,
         "located": 511,
         "by_status": {
-          "EXACT": 504,
+          "EXACT": 509,
           "MISS_LOCATION": 2,
-          "MISS_TYPE": 7
+          "MISS_TYPE": 2
         },
         "uses_expected_types_for_pairing": false
       },
       "compat": {
-        "exact": 505,
-        "exact_rate": 0.9844,
+        "exact": 510,
+        "exact_rate": 0.9942,
         "located": 513,
         "by_status": {
-          "EXACT": 505,
-          "MISS_TYPE": 8
+          "EXACT": 510,
+          "MISS_TYPE": 3
         },
         "uses_expected_types_for_pairing": false
       }
@@ -88,12 +88,12 @@
     "strict": {
       "claim_boundary": "Meridian native-Python micro progress against Outline fact_id inventory. GCP + Python harness. Primary gate is strict exact-locator pairing; compat allows locator soft-match but never uses ground-truth types to pick sites. legacy mode (expected-type disambiguation) is historical only and is not SOTA. Not Outline-port FACT_PAIRED 513/513; not Autogen README #1.",
       "total_facts_scored": 513,
-      "exact": 504,
-      "exact_rate": 0.9825,
+      "exact": 509,
+      "exact_rate": 0.9922,
       "located": 511,
       "missing_source_templates": 0,
       "template_errors": 0,
-      "elapsed_sec": 167.7,
+      "elapsed_sec": 163.6,
       "by_category": {
         "assignments": {
           "exact": 81,
@@ -111,14 +111,14 @@
           "rate": 0.9907
         },
         "direct_calls": {
-          "exact": 21,
+          "exact": 23,
           "total": 24,
-          "rate": 0.875
+          "rate": 0.9583
         },
         "functions": {
-          "exact": 34,
+          "exact": 37,
           "total": 37,
-          "rate": 0.9189
+          "rate": 1.0
         },
         "lambdas": {
           "exact": 34,
@@ -137,9 +137,9 @@
         }
       },
       "by_status": {
-        "EXACT": 504,
+        "EXACT": 509,
         "MISS_LOCATION": 2,
-        "MISS_TYPE": 7
+        "MISS_TYPE": 2
       },
       "scoring_mode": "strict",
       "outline_manifest": "/Users/imac/Documents/code/github/outline/outline/src/test/java/org/twelve/outline/toplas/TYPEEVALPY-FACT-MANIFEST.csv",
@@ -150,12 +150,12 @@
     "compat": {
       "claim_boundary": "Meridian native-Python micro progress against Outline fact_id inventory. GCP + Python harness. Primary gate is strict exact-locator pairing; compat allows locator soft-match but never uses ground-truth types to pick sites. legacy mode (expected-type disambiguation) is historical only and is not SOTA. Not Outline-port FACT_PAIRED 513/513; not Autogen README #1.",
       "total_facts_scored": 513,
-      "exact": 505,
-      "exact_rate": 0.9844,
+      "exact": 510,
+      "exact_rate": 0.9942,
       "located": 513,
       "missing_source_templates": 0,
       "template_errors": 0,
-      "elapsed_sec": 167.7,
+      "elapsed_sec": 163.6,
       "by_category": {
         "assignments": {
           "exact": 81,
@@ -173,14 +173,14 @@
           "rate": 0.9907
         },
         "direct_calls": {
-          "exact": 21,
+          "exact": 23,
           "total": 24,
-          "rate": 0.875
+          "rate": 0.9583
         },
         "functions": {
-          "exact": 34,
+          "exact": 37,
           "total": 37,
-          "rate": 0.9189
+          "rate": 1.0
         },
         "lambdas": {
           "exact": 34,
@@ -199,8 +199,8 @@
         }
       },
       "by_status": {
-        "EXACT": 505,
-        "MISS_TYPE": 8
+        "EXACT": 510,
+        "MISS_TYPE": 3
       },
       "scoring_mode": "compat",
       "outline_manifest": "/Users/imac/Documents/code/github/outline/outline/src/test/java/org/twelve/outline/toplas/TYPEEVALPY-FACT-MANIFEST.csv",
@@ -4515,28 +4515,27 @@
       },
       {
         "fact_id": "direct_calls/single_argument/003/main.py:8:5/FR/double",
-        "status": "MISS_TYPE",
+        "status": "EXACT",
         "category": "direct_calls",
         "template": "single_argument",
         "expected": [
           "int"
         ],
         "predicted": [
-          "float",
           "int"
         ],
         "mapping_outline": "PORTABLE"
       },
       {
         "fact_id": "direct_calls/single_argument/004/main.py:8:12/FP/x",
-        "status": "MISS_TYPE",
+        "status": "EXACT",
         "category": "direct_calls",
         "template": "single_argument",
         "expected": [
           "int"
         ],
         "predicted": [
-          "float"
+          "int"
         ],
         "mapping_outline": "PORTABLE"
       },
@@ -4799,7 +4798,7 @@
       },
       {
         "fact_id": "functions/composition/004/main.py:8:5/FR/square",
-        "status": "MISS_TYPE",
+        "status": "EXACT",
         "category": "functions",
         "template": "composition",
         "expected": [
@@ -4807,13 +4806,14 @@
           "int"
         ],
         "predicted": [
-          "float"
+          "float",
+          "int"
         ],
         "mapping_outline": "PORTABLE"
       },
       {
         "fact_id": "functions/composition/005/main.py:8:12/FP/x",
-        "status": "MISS_TYPE",
+        "status": "EXACT",
         "category": "functions",
         "template": "composition",
         "expected": [
@@ -4821,20 +4821,21 @@
           "int"
         ],
         "predicted": [
-          "float"
+          "float",
+          "int"
         ],
         "mapping_outline": "PORTABLE"
       },
       {
         "fact_id": "functions/composition/006/main.py:12:1/LV/a",
-        "status": "MISS_TYPE",
+        "status": "EXACT",
         "category": "functions",
         "template": "composition",
         "expected": [
           "int"
         ],
         "predicted": [
-          "float"
+          "int"
         ],
         "mapping_outline": "PORTABLE"
       },
@@ -11206,28 +11207,27 @@
       },
       {
         "fact_id": "direct_calls/single_argument/003/main.py:8:5/FR/double",
-        "status": "MISS_TYPE",
+        "status": "EXACT",
         "category": "direct_calls",
         "template": "single_argument",
         "expected": [
           "int"
         ],
         "predicted": [
-          "float",
           "int"
         ],
         "mapping_outline": "PORTABLE"
       },
       {
         "fact_id": "direct_calls/single_argument/004/main.py:8:12/FP/x",
-        "status": "MISS_TYPE",
+        "status": "EXACT",
         "category": "direct_calls",
         "template": "single_argument",
         "expected": [
           "int"
         ],
         "predicted": [
-          "float"
+          "int"
         ],
         "mapping_outline": "PORTABLE"
       },
@@ -11490,7 +11490,7 @@
       },
       {
         "fact_id": "functions/composition/004/main.py:8:5/FR/square",
-        "status": "MISS_TYPE",
+        "status": "EXACT",
         "category": "functions",
         "template": "composition",
         "expected": [
@@ -11498,13 +11498,14 @@
           "int"
         ],
         "predicted": [
-          "float"
+          "float",
+          "int"
         ],
         "mapping_outline": "PORTABLE"
       },
       {
         "fact_id": "functions/composition/005/main.py:8:12/FP/x",
-        "status": "MISS_TYPE",
+        "status": "EXACT",
         "category": "functions",
         "template": "composition",
         "expected": [
@@ -11512,20 +11513,21 @@
           "int"
         ],
         "predicted": [
-          "float"
+          "float",
+          "int"
         ],
         "mapping_outline": "PORTABLE"
       },
       {
         "fact_id": "functions/composition/006/main.py:12:1/LV/a",
-        "status": "MISS_TYPE",
+        "status": "EXACT",
         "category": "functions",
         "template": "composition",
         "expected": [
           "int"
         ],
         "predicted": [
-          "float"
+          "int"
         ],
         "mapping_outline": "PORTABLE"
       },
@@ -17894,28 +17896,27 @@
     },
     {
       "fact_id": "direct_calls/single_argument/003/main.py:8:5/FR/double",
-      "status": "MISS_TYPE",
+      "status": "EXACT",
       "category": "direct_calls",
       "template": "single_argument",
       "expected": [
         "int"
       ],
       "predicted": [
-        "float",
         "int"
       ],
       "mapping_outline": "PORTABLE"
     },
     {
       "fact_id": "direct_calls/single_argument/004/main.py:8:12/FP/x",
-      "status": "MISS_TYPE",
+      "status": "EXACT",
       "category": "direct_calls",
       "template": "single_argument",
       "expected": [
         "int"
       ],
       "predicted": [
-        "float"
+        "int"
       ],
       "mapping_outline": "PORTABLE"
     },
@@ -18178,7 +18179,7 @@
     },
     {
       "fact_id": "functions/composition/004/main.py:8:5/FR/square",
-      "status": "MISS_TYPE",
+      "status": "EXACT",
       "category": "functions",
       "template": "composition",
       "expected": [
@@ -18186,13 +18187,14 @@
         "int"
       ],
       "predicted": [
-        "float"
+        "float",
+        "int"
       ],
       "mapping_outline": "PORTABLE"
     },
     {
       "fact_id": "functions/composition/005/main.py:8:12/FP/x",
-      "status": "MISS_TYPE",
+      "status": "EXACT",
       "category": "functions",
       "template": "composition",
       "expected": [
@@ -18200,20 +18202,21 @@
         "int"
       ],
       "predicted": [
-        "float"
+        "float",
+        "int"
       ],
       "mapping_outline": "PORTABLE"
     },
     {
       "fact_id": "functions/composition/006/main.py:12:1/LV/a",
-      "status": "MISS_TYPE",
+      "status": "EXACT",
       "category": "functions",
       "template": "composition",
       "expected": [
         "int"
       ],
       "predicted": [
-        "float"
+        "int"
       ],
       "mapping_outline": "PORTABLE"
     },
