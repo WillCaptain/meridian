@@ -2,7 +2,6 @@ package org.twelve.meridian.python;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
-import org.twelve.gcp.ast.AST;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -25,7 +24,6 @@ class TypeEvalPySiteExporterTest {
 
     @Test
     void sitesMatchTypeEvalPyStyleLocations() throws Exception {
-        // Locations follow TypeEvalPy GT (1-based col_offset).
         Path py = tmp.resolve("main.py");
         Files.writeString(py, """
                 def one():
@@ -36,14 +34,14 @@ class TypeEvalPySiteExporterTest {
 
         PythonInferencer.InferResult r = new PythonInferencer().inferFileDetailed(py.toFile());
         List<Map<String, Object>> sites =
-                new TypeEvalPySiteExporter().collect(r.ast(), "main.py", r.pyAst());
+                new TypeEvalPySiteExporter().collect(r.inference());
 
         Map<String, Object> fr = find(sites, s -> s.containsKey("function")
                 && !s.containsKey("parameter") && "one".equals(s.get("function")));
         Map<String, Object> lv = find(sites, s -> "x".equals(s.get("variable")));
 
         assertEquals(1, fr.get("line_number"));
-        assertEquals(5, fr.get("col_offset")); // `def one` → name at 0-based 4
+        assertEquals(5, fr.get("col_offset"));
         assertTrue(((List<?>) fr.get("type")).contains("int"), () -> String.valueOf(sites));
 
         assertEquals(4, lv.get("line_number"));
@@ -63,7 +61,7 @@ class TypeEvalPySiteExporterTest {
 
         PythonInferencer.InferResult r = new PythonInferencer().inferFileDetailed(py.toFile());
         List<Map<String, Object>> sites =
-                new TypeEvalPySiteExporter().collect(r.ast(), "main.py", r.pyAst());
+                new TypeEvalPySiteExporter().collect(r.inference());
 
         Map<String, Object> fpA = find(sites, s -> "a".equals(s.get("parameter")));
         assertEquals(1, fpA.get("line_number"));
@@ -86,7 +84,7 @@ class TypeEvalPySiteExporterTest {
 
         PythonInferencer.InferResult r = new PythonInferencer().inferFileDetailed(py.toFile());
         List<Map<String, Object>> sites =
-                new TypeEvalPySiteExporter().collect(r.ast(), "main.py", r.pyAst());
+                new TypeEvalPySiteExporter().collect(r.inference());
 
         assertTrue(sites.stream().anyMatch(s -> "MyClass.func1".equals(s.get("function"))),
                 () -> String.valueOf(sites));

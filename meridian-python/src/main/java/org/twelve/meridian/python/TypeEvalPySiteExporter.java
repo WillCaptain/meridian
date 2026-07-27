@@ -62,6 +62,18 @@ public class TypeEvalPySiteExporter {
      */
     private boolean skipForeignSummaries;
 
+    private boolean usesSharedSemanticLayer() {
+        return sharedInference != null && skipForeignSummaries;
+    }
+
+    /** Final overlay: shared container / call / method facts onto site JSON. */
+    private void applySharedInferenceOverlay(List<Map<String, Object>> sites, String fileName) {
+        if (sharedInference == null) return;
+        applySharedContainerElements(sites, fileName);
+        applySharedCallResults(sites, fileName);
+        applySharedMethodReturns(sites, fileName);
+    }
+
     public List<Map<String, Object>> collect(AST ast, String fileName) {
         return collect(ast, fileName, null, null, null);
     }
@@ -110,9 +122,7 @@ public class TypeEvalPySiteExporter {
                     skipForeignSummaries = false;
                 }
                 enrichFromPythonAst(sites, pyAst, fileName, sourcePath);
-                applySharedContainerElements(sites, fileName);
-                applySharedCallResults(sites, fileName);
-                applySharedMethodReturns(sites, fileName);
+                applySharedInferenceOverlay(sites, fileName);
             }
             return sites;
         } finally {
@@ -244,14 +254,13 @@ public class TypeEvalPySiteExporter {
         // Fill FR/FP gaps from py AST (dual cols, AugAssign FPs, return heuristics).
         ensureFunctionSitesFromPyAst(sites, pyModule, fileName);
         emitClassBodyAttrs(sites, pyModule, fileName);
-        // Prefer shared self.attr / method returns; fall back to exporter-local pass.
-        if (sharedInference != null && !sharedInference.methodReturns().isEmpty()) {
-            applySharedMethodReturns(sites, fileName);
-        } else {
+        if (!usesSharedSemanticLayer()) {
             fixDelegatingMethodReturns(sites, pyModule, fileName);
         }
         // Seed container LVs before expandNameBinding so we never invent keys.
-        applySharedContainerElements(sites, fileName);
+        if (sharedInference != null) {
+            applySharedContainerElements(sites, fileName);
+        }
         Map<String, List<String>> frTypes = indexFrTypes(sites);
         // Interleave bind + refine so a=b=func1; c=b(); a=b=func2 keeps c=str.
         for (Map<String, Object> stmt : PyConverter.listOf(pyModule, "body")) {
@@ -261,16 +270,14 @@ public class TypeEvalPySiteExporter {
             emitCallResultElements(sites, stmt, fileName, callReturns, frTypes, dictLits);
         }
         // Re-resolve return self.attr now that Class.attr LVs exist (base_class_attr).
-        if (sharedInference == null || sharedInference.methodReturns().isEmpty()) {
+        if (!usesSharedSemanticLayer()) {
             refineSelfAttrMethodReturns(sites, pyModule, fileName);
         }
         // Module-level use sites: imports, attr loads, dict stores, lambdas, .copy().
         Map<String, String> importAliases = collectImportAliases(pyModule);
-        // Shared refine already indexes registered + import-needed sibling modules.
-        Map<String, Map<String, List<String>>> foreign =
-                skipForeignSummaries
-                        ? Map.of()
-                        : loadSiblingSummaries(sourcePath, importAliases);
+        Map<String, Map<String, List<String>>> foreign = usesSharedSemanticLayer()
+                ? Map.of()
+                : loadSiblingSummaries(sourcePath, importAliases);
         emitUseSiteAdapters(sites, pyModule, fileName, listLits, dictLits, callReturns,
                 importAliases, foreign);
         // Re-qualify in case ensureFunctionSites added bare method FRs.
@@ -2812,7 +2819,12 @@ public class TypeEvalPySiteExporter {
                     String attr = PyConverter.strOf(target, "id");
                     int line = PyConverter.lineOf(target);
                     int col = PyConverter.colOf(target);
-                    upsertLv(sites, fileName, line, col, className + "." + attr, types);
+                    String qname = className + "." + attr;
+                    if (sharedInference != null) {
+                        List<String> shared = sharedInference.containerElements().get(qname);
+                        if (shared != null && !shared.isEmpty()) types = shared;
+                    }
+                    upsertLv(sites, fileName, line, col, qname, types);
                 }
             }
         }
