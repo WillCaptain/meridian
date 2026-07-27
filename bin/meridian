@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Thin wrapper: build classpath from local Maven install, run MeridianCli.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+MODULE="$ROOT/meridian-python"
+JAR="$MODULE/target/meridian-python-1.0-SNAPSHOT.jar"
+CP_FILE="${TMPDIR:-/tmp}/meridian-cp.$$"
+
+cleanup() { rm -f "$CP_FILE"; }
+trap cleanup EXIT
+
+need_build=0
+if [[ ! -f "$JAR" ]]; then
+  need_build=1
+elif ! jar tf "$JAR" 2>/dev/null | grep -q 'org/twelve/meridian/python/cli/MeridianCli.class'; then
+  need_build=1
+fi
+
+if [[ "$need_build" -eq 1 ]]; then
+  echo "meridian: packaging meridian-python…" >&2
+  mvn -q -B -f "$ROOT/pom.xml" -pl meridian-python -am package -DskipTests
+fi
+
+mvn -q -B -f "$MODULE/pom.xml" dependency:build-classpath -Dmdep.outputFile="$CP_FILE"
+CP="$JAR:$(cat "$CP_FILE")"
+
+exec java -cp "$CP" org.twelve.meridian.python.cli.MeridianCli "$@"

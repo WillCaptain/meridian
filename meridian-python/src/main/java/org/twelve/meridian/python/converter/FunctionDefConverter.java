@@ -37,7 +37,14 @@ public class FunctionDefConverter extends PyConverter {
         FunctionNode fn = FunctionNode.from(body, args.toArray(new Argument[0]));
 
         VariableDeclarator decl = new VariableDeclarator(ast, VariableKind.LET);
-        decl.declare(identifier(ast, name), fn);
+        // FR sites in TypeEvalPy sit on the function *name*, not the `def` keyword.
+        int nameCol = functionNameCol(pyNode);
+        int nameLine = lineOf(pyNode);
+        if (nameLine >= 0 && nameCol >= 0) {
+            decl.declare(identifier(ast, name, nameLine, nameCol), fn);
+        } else {
+            decl.declare(identifier(ast, name, pyNode), fn);
+        }
         addStatement(ast, parent, decl);
         return decl;
     }
@@ -59,7 +66,7 @@ public class FunctionDefConverter extends PyConverter {
             if (typeNode == null && i >= firstDefaultIdx) {
                 typeNode = inferDefaultType(ast, defaults.get(i - firstDefaultIdx));
             }
-            args.add(new Argument(identifier(ast, argName), typeNode));
+            args.add(new Argument(identifier(ast, argName, argNode), typeNode));
         }
         return args;
     }

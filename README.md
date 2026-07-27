@@ -1,9 +1,62 @@
-# meridian
+# Meridian
 
-Meridian workspace currently hosts the `meridian-python` module.
+**Meridian** is a deterministic zero-annotation **Python type inferencer** built on
+[GCP](https://github.com/WillCaptain/gcp) (Generic Constraint Projection).
 
-## Documentation
+```text
+unannotated Python  →  Meridian (GCP)  →  PEP 484 annotations  →  mypyc  →  faster native code
+```
 
-- Module root: `meridian-python/`
-- Usage docs: `meridian-python/docs/index.md`
-- Design docs: `meridian-python/spec/index.md`
+TypeEvalPy / Autogen leaderboard numbers are a **downstream outcome** of this
+pipeline on unmodified Python — not the definition of the product.
+
+## Repo layout
+
+| Path | Role |
+|------|------|
+| [`meridian-python/`](meridian-python/) | Python → ASF → GCP → annotate → mypyc |
+| [`MERIDIAN-PRODUCT-ROADMAP.md`](MERIDIAN-PRODUCT-ROADMAP.md) | Product phases (start here) |
+| [`MERIDIAN-SESSION-HANDOFF.md`](MERIDIAN-SESSION-HANDOFF.md) | Agent / session resume prompt |
+| [`meridian-python/spec/plan.md`](meridian-python/spec/plan.md) | Converter coverage backlog |
+| [`meridian-python/docs/`](meridian-python/docs/) | Experiments & feature coverage |
+
+## Quick start (dev)
+
+Sibling checkouts: `msll`, `gcp`, `meridian`.
+
+```bash
+mvn -B install -DskipTests -f ../msll/pom.xml
+mvn -B install -DskipTests -f ../gcp/pom.xml
+mvn -B test -f meridian-python/pom.xml
+```
+
+### CLI
+
+```bash
+chmod +x bin/meridian
+./bin/meridian infer path/to/file.py          # annotated Python → stdout
+./bin/meridian stub  path/to/file.py -o x.pyi
+./bin/meridian sites path/to/file.py          # TypeEvalPy FR/FP/LV JSON
+```
+
+Or: `mvn -q -f meridian-python/pom.xml exec:java -Dexec.args='infer file.py'`
+
+See [`REPRODUCE.md`](REPRODUCE.md). Product phases: [`MERIDIAN-PRODUCT-ROADMAP.md`](MERIDIAN-PRODUCT-ROADMAP.md).
+
+## TypeEvalPy micro progress (native Meridian)
+
+Fact IDs come from the **latest Outline** toplas manifest (keep Outline updated):
+
+```bash
+python3 scripts/run-typeevalpy-micro-progress.py \
+  --manifest ../outline/outline/src/test/java/org/twelve/outline/toplas/TYPEEVALPY-FACT-MANIFEST.csv
+```
+
+Report: [`meridian-python/docs/typeevalpy-micro-progress.md`](meridian-python/docs/typeevalpy-micro-progress.md).  
+Docker drop-in scaffold: [`typeevalpy-adapter/`](typeevalpy-adapter/).
+
+## Related work
+
+- GCP theory paper (Outline-port TypeEvalPy 513/513): arXiv:2607.19693
+- Outline frozen artefact: https://github.com/WillCaptain/outline/releases/tag/toplas-typeevalpy-513
+- HF dataset card: https://huggingface.co/datasets/will-zhang/typeevalpy-outline-port

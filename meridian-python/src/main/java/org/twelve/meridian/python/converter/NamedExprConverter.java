@@ -44,9 +44,9 @@ public class NamedExprConverter extends PyConverter {
         if (value == null) return null;
 
         VariableDeclarator decl = new VariableDeclarator(ast, VariableKind.VAR);
-        decl.declare(identifier(ast, varName), value);
+        decl.declare(identifier(ast, varName, target), value);
         addStatement(ast, parent, decl);
 
-        return identifier(ast, varName);
+        return identifier(ast, varName, target);
     }
 }

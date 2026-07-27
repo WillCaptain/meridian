@@ -274,8 +274,68 @@ public abstract class PyConverter {
     }
 
     public static Identifier identifier(AST ast, String name) {
+        return identifier(ast, name, (Map<String, Object>) null);
+    }
+
+    /**
+     * Build an {@link Identifier} whose token carries Python AST {@code _line}/{@code _col}
+     * (1-based line, 0-based column) when {@code pyNode} provides them.
+     */
+    public static Identifier identifier(AST ast, String name, Map<String, Object> pyNode) {
         if (name == null) return null;
-        return new Identifier(ast, new Token<>(name, 0));
+        return new Identifier(ast, token(name, pyNode));
+    }
+
+    /** Like {@link #identifier(AST, String, Map)} but with an explicit 0-based column. */
+    public static Identifier identifier(AST ast, String name, int line, int col) {
+        if (name == null) return null;
+        return new Identifier(ast, token(name, line, col));
+    }
+
+    public static Token<String> token(String lexeme, Map<String, Object> pyNode) {
+        if (pyNode == null) return new Token<>(lexeme, 0);
+        int line = intOf(pyNode, "_line", -1);
+        int col = intOf(pyNode, "_col", -1);
+        if (line < 0 || col < 0) return new Token<>(lexeme, 0);
+        return token(lexeme, line, col);
+    }
+
+    public static Token<String> token(String lexeme, int line, int col) {
+        // Absolute offset unknown from the JSON dump; keep 0 and rely on line/col for matching.
+        return new Token<>(lexeme, 0, line, col);
+    }
+
+    public static int intOf(Map<String, Object> node, String key, int defaultValue) {
+        if (node == null) return defaultValue;
+        Object v = node.get(key);
+        if (v instanceof Number n) return n.intValue();
+        if (v instanceof String s) {
+            try {
+                return Integer.parseInt(s);
+            } catch (NumberFormatException ignored) {
+                return defaultValue;
+            }
+        }
+        return defaultValue;
+    }
+
+    public static int lineOf(Map<String, Object> node) {
+        return intOf(node, "_line", -1);
+    }
+
+    public static int colOf(Map<String, Object> node) {
+        return intOf(node, "_col", -1);
+    }
+
+    /**
+     * Column of a {@code FunctionDef}/{@code AsyncFunctionDef} <em>name</em> identifier.
+     * Python's node {@code col_offset} points at {@code def}/{@code async}; TypeEvalPy GT
+     * sites the function-return fact on the name itself.
+     */
+    public static int functionNameCol(Map<String, Object> funcNode) {
+        int col = colOf(funcNode);
+        if (col < 0) return -1;
+        return "AsyncFunctionDef".equals(typeOf(funcNode)) ? col + 10 : col + 4;
     }
 
     public static List<Identifier> moduleIds(AST ast, String dotted) {

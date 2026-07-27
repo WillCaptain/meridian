@@ -14,6 +14,6 @@ public class NameConverter extends PyConverter {
 
     @Override
     public Node convert(AST ast, Map<String, Object> pyNode, Node parent) {
-        return identifier(ast, strOf(pyNode, "id"));
+        return identifier(ast, strOf(pyNode, "id"), pyNode);
     }
 }

@@ -14,11 +14,8 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Handles {@code Assign}: {@code x = expr} and tuple unpack {@code a, b = expr}.
- *
- * <p>Simple name targets create a {@link VariableDeclarator}.
- * Tuple targets (P0) create a {@link TupleUnpackNode} as the assignable, enabling
- * GCP to infer individual element types from multi-valued returns.
+ * Handles {@code Assign}: {@code x = expr} and tuple unpack {@code a, b = expr}
+ * / {@code a, *b, c = expr} / nested {@code c, (d, e) = expr}.
  */
 public class AssignConverter extends PyConverter {
 
@@ -35,7 +32,7 @@ public class AssignConverter extends PyConverter {
         boolean declared = false;
 
         for (Map<String, Object> target : listOf(pyNode, "targets")) {
-            Assignable assignable = buildAssignable(ast, target, parent, value);
+            Assignable assignable = buildAssignable(ast, target);
             if (assignable != null) {
                 decl.declare(assignable, value);
                 declared = true;
@@ -47,57 +44,55 @@ public class AssignConverter extends PyConverter {
         return decl;
     }
 
-    private Assignable buildAssignable(AST ast, Map<String, Object> target, Node parent, Expression value) {
+    private Assignable buildAssignable(AST ast, Map<String, Object> target) {
         String t = typeOf(target);
         if ("Name".equals(t)) {
-            return identifier(ast, strOf(target, "id"));
+            return identifier(ast, strOf(target, "id"), target);
         }
         if ("Tuple".equals(t) || "List".equals(t)) {
-            return buildTupleUnpack(ast, target, parent, value);
+            return buildTupleUnpack(ast, target);
         }
         return null;
     }
 
     /**
-     * Build a {@link TupleUnpackNode} for patterns like {@code a, b = ...} or {@code a, *rest, c = ...}.
-     *
-     * <p>The starred variable ({@code *rest}) is separately declared as holding the full iterable
-     * expression so GCP can infer its element type (e.g. {@code rest: list[int]} when value is a
-     * {@code list[int]}).
+     * Build a {@link TupleUnpackNode} for {@code a, b = …}, {@code a, *rest, c = …},
+     * and nested patterns {@code c, (d, e) = …}.
      */
-    private TupleUnpackNode buildTupleUnpack(AST ast, Map<String, Object> target, Node parent, Expression value) {
+    private TupleUnpackNode buildTupleUnpack(AST ast, Map<String, Object> target) {
         List<Node> begins = new ArrayList<>();
         List<Node> ends = new ArrayList<>();
+        Identifier rest = null;
         boolean starSeen = false;
 
         for (Map<String, Object> elt : listOf(target, "elts")) {
             if ("Starred".equals(typeOf(elt))) {
                 starSeen = true;
-                // Declare the starred variable with the full iterable value so its list type propagates
                 Map<String, Object> starValue = mapOf(elt, "value");
-                if (starValue != null && value != null) {
-                    String restName = strOf(starValue, "id");
-                    if (restName != null) {
-                        VariableDeclarator restDecl = new VariableDeclarator(ast, VariableKind.VAR);
-                        restDecl.declare(identifier(ast, restName), value);
-                        addStatement(ast, parent, restDecl);
-                    }
+                if (starValue != null && "Name".equals(typeOf(starValue))) {
+                    rest = identifier(ast, strOf(starValue, "id"), starValue);
                 }
                 continue;
             }
-            Identifier id = resolveIdentifier(ast, elt);
-            if (id == null) continue;
+            Node piece = unpackPiece(ast, elt);
+            if (piece == null) continue;
             if (starSeen) {
-                ends.add(id);
+                ends.add(piece);
             } else {
-                begins.add(id);
+                begins.add(piece);
             }
         }
-        return new TupleUnpackNode(ast, begins, ends);
+        return new TupleUnpackNode(ast, begins, rest, ends);
     }
 
-    private Identifier resolveIdentifier(AST ast, Map<String, Object> node) {
-        if ("Name".equals(typeOf(node))) return identifier(ast, strOf(node, "id"));
+    private Node unpackPiece(AST ast, Map<String, Object> node) {
+        String t = typeOf(node);
+        if ("Name".equals(t)) {
+            return identifier(ast, strOf(node, "id"), node);
+        }
+        if ("Tuple".equals(t) || "List".equals(t)) {
+            return buildTupleUnpack(ast, node);
+        }
         return null;
     }
 }

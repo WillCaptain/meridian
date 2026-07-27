@@ -35,4 +35,29 @@
             <artifactId>junit-jupiter-engine</artifactId>
         </dependency>
     </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <version>3.4.1</version>
+                <configuration>
+                    <archive>
+                        <manifest>
+                            <mainClass>org.twelve.meridian.python.cli.MeridianCli</mainClass>
+                        </manifest>
+                    </archive>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+                <version>3.5.0</version>
+                <configuration>
+                    <mainClass>org.twelve.meridian.python.cli.MeridianCli</mainClass>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
 </project>

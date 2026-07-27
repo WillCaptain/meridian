@@ -26,7 +26,13 @@ public class ClassDefConverter extends PyConverter {
     @Override
     public Node convert(AST ast, Map<String, Object> pyNode, Node parent) {
         String name = strOf(pyNode, "name");
-        SymbolIdentifier symId = new SymbolIdentifier(ast, new Token<>(name, 0));
+        // Python ClassDef.col_offset points at `class`; name starts after "class " (6 chars).
+        int nameLine = lineOf(pyNode);
+        int nameCol = colOf(pyNode) >= 0 ? colOf(pyNode) + 6 : -1;
+        Token<String> nameTok = (nameLine >= 0 && nameCol >= 0)
+                ? token(name, nameLine, nameCol)
+                : token(name, pyNode);
+        SymbolIdentifier symId = new SymbolIdentifier(ast, nameTok);
 
         List<OutlineDefinition> defs = new ArrayList<>();
         defs.add(new OutlineDefinition(symId, new EntityTypeNode(ast)));
@@ -38,7 +44,7 @@ public class ClassDefConverter extends PyConverter {
                 TypeNode typeNode = buildTypeNode(ast, mapOf(stmt, "annotation"));
                 if (fieldName != null && typeNode != null) {
                     defs.add(new OutlineDefinition(
-                            new SymbolIdentifier(ast, new Token<>(fieldName, 0)),
+                            new SymbolIdentifier(ast, token(fieldName, target != null ? target : stmt)),
                             typeNode));
                 }
             }

@@ -119,12 +119,23 @@ public class PythonInferencer {
      * when imported; the in-memory registry (if populated) takes priority.
      */
     public AST inferFile(File pythonFile) throws IOException {
+        return inferFileDetailed(pythonFile).ast();
+    }
+
+    /**
+     * Like {@link #inferFile(File)} but also returns the Python JSON AST so site
+     * export can apply TypeEvalPy harness adapters (qualified methods, container LVs).
+     */
+    public InferResult inferFileDetailed(File pythonFile) throws IOException {
         converter.setModuleLoader(buildLoader(pythonFile.getParentFile()));
         Map<String, Object> pyAst = bridge.parseFile(pythonFile);
         AST ast = converter.convert(pyAst);
         asf.infer();
-        return ast;
+        return new InferResult(ast, pyAst);
     }
+
+    /** Result of {@link #inferFileDetailed(File)}. */
+    public record InferResult(AST ast, Map<String, Object> pyAst) {}
 
     /**
      * Demand-driven (call-site) inference: process the library source together with

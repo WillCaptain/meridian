@@ -1,0 +1,106 @@
+package org.twelve.meridian.python;
+
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+import org.twelve.gcp.ast.AST;
+
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.List;
+import java.util.Map;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+class TypeEvalPySiteExporterTest {
+
+    @TempDir Path tmp;
+
+    @Test
+    void vocabErasesGenerics() {
+        assertEquals(List.of("list"), TypeEvalPySiteExporter.toTypeEvalPyVocab("list[int]"));
+        assertEquals(List.of("callable"), TypeEvalPySiteExporter.toTypeEvalPyVocab("Callable[[int], str]"));
+        assertEquals(List.of("int", "Nonetype"), TypeEvalPySiteExporter.toTypeEvalPyVocab("Optional[int]"));
+    }
+
+    @Test
+    void sitesMatchTypeEvalPyStyleLocations() throws Exception {
+        // Locations follow TypeEvalPy GT (1-based col_offset).
+        Path py = tmp.resolve("main.py");
+        Files.writeString(py, """
+                def one():
+                    return 1
+
+                x = one()
+                """);
+
+        PythonInferencer.InferResult r = new PythonInferencer().inferFileDetailed(py.toFile());
+        List<Map<String, Object>> sites =
+                new TypeEvalPySiteExporter().collect(r.ast(), "main.py", r.pyAst());
+
+        Map<String, Object> fr = find(sites, s -> s.containsKey("function")
+                && !s.containsKey("parameter") && "one".equals(s.get("function")));
+        Map<String, Object> lv = find(sites, s -> "x".equals(s.get("variable")));
+
+        assertEquals(1, fr.get("line_number"));
+        assertEquals(5, fr.get("col_offset")); // `def one` → name at 0-based 4
+        assertTrue(((List<?>) fr.get("type")).contains("int"), () -> String.valueOf(sites));
+
+        assertEquals(4, lv.get("line_number"));
+        assertEquals(1, lv.get("col_offset"));
+        assertTrue(((List<?>) lv.get("type")).contains("int"), () -> String.valueOf(lv));
+    }
+
+    @Test
+    void parameterSitesUseArgColumns() throws Exception {
+        Path py = tmp.resolve("main.py");
+        Files.writeString(py, """
+                def add(a, b):
+                    return a + b
+
+                x = add(1, 2)
+                """);
+
+        PythonInferencer.InferResult r = new PythonInferencer().inferFileDetailed(py.toFile());
+        List<Map<String, Object>> sites =
+                new TypeEvalPySiteExporter().collect(r.ast(), "main.py", r.pyAst());
+
+        Map<String, Object> fpA = find(sites, s -> "a".equals(s.get("parameter")));
+        assertEquals(1, fpA.get("line_number"));
+        assertEquals(9, fpA.get("col_offset"));
+        assertTrue(((List<?>) fpA.get("type")).contains("int"), () -> String.valueOf(fpA));
+    }
+
+    @Test
+    void containerAndQualifiedMethodAdapters() throws Exception {
+        Path py = tmp.resolve("main.py");
+        Files.writeString(py, """
+                class MyClass:
+                    def func1(self):
+                        return 42
+
+                keys = ["a", "b"]
+                dict1 = {"a": 1, "b": 2}
+                a, *b, c = MyClass.func1, MyClass.func1, MyClass.func1
+                """);
+
+        PythonInferencer.InferResult r = new PythonInferencer().inferFileDetailed(py.toFile());
+        List<Map<String, Object>> sites =
+                new TypeEvalPySiteExporter().collect(r.ast(), "main.py", r.pyAst());
+
+        assertTrue(sites.stream().anyMatch(s -> "MyClass.func1".equals(s.get("function"))),
+                () -> String.valueOf(sites));
+        assertTrue(sites.stream().anyMatch(s -> "keys[0]".equals(s.get("variable"))),
+                () -> String.valueOf(sites));
+        assertTrue(sites.stream().anyMatch(s -> "dict1['a']".equals(s.get("variable"))),
+                () -> String.valueOf(sites));
+        assertTrue(sites.stream().anyMatch(s -> "b[0]".equals(s.get("variable"))),
+                () -> String.valueOf(sites));
+    }
+
+    private static Map<String, Object> find(List<Map<String, Object>> sites,
+                                            java.util.function.Predicate<Map<String, Object>> pred) {
+        return sites.stream().filter(pred).findFirst()
+                .orElseThrow(() -> new AssertionError("site not found in " + sites));
+    }
+}

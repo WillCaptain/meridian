@@ -3,10 +3,13 @@ package org.twelve.meridian.python.converter;
 import org.twelve.gcp.ast.AST;
 import org.twelve.gcp.ast.Node;
 import org.twelve.gcp.ast.Token;
+import org.twelve.gcp.common.Pair;
 import org.twelve.gcp.node.expression.ArrayNode;
+import org.twelve.gcp.node.expression.DictNode;
 import org.twelve.gcp.node.expression.Expression;
 import org.twelve.gcp.node.expression.LiteralNode;
 import org.twelve.gcp.node.expression.accessor.ArrayAccessor;
+import org.twelve.gcp.node.expression.accessor.MemberAccessor;
 import org.twelve.gcp.node.function.FunctionCallNode;
 
 import java.util.ArrayList;
@@ -101,8 +104,37 @@ public class CallConverter extends PyConverter {
                 yield (Expression) dispatch(ast, arg);
             }
 
+            // dict() / dict(zip(keys, values)) → GCP Dict / zip_dict
+            case "dict" -> dictBuiltin(ast, args);
+
             default -> null;
         };
+    }
+
+    @SuppressWarnings("unchecked")
+    private Node dictBuiltin(AST ast, List<Map<String, Object>> args) {
+        if (args.isEmpty()) {
+            return new DictNode(ast, (Pair<Expression, Expression>[]) new Pair[0]);
+        }
+        Map<String, Object> arg0 = args.get(0);
+        // dict(zip(keys, values)) → [:].zip_dict(keys)(values)  (Outline ADAPTED counterpart)
+        if ("Call".equals(typeOf(arg0))) {
+            Map<String, Object> zipFunc = mapOf(arg0, "func");
+            if (zipFunc != null && "zip".equals(strOf(zipFunc, "id"))) {
+                List<Map<String, Object>> zipArgs = listOf(arg0, "args");
+                if (zipArgs.size() >= 2) {
+                    Expression keys = (Expression) dispatch(ast, zipArgs.get(0));
+                    Expression vals = (Expression) dispatch(ast, zipArgs.get(1));
+                    if (keys != null && vals != null) {
+                        DictNode witness = new DictNode(ast, (Pair<Expression, Expression>[]) new Pair[0]);
+                        Expression zipDict = new MemberAccessor(witness, identifier(ast, "zip_dict"));
+                        Expression afterKeys = new FunctionCallNode(zipDict, keys);
+                        return new FunctionCallNode(afterKeys, vals);
+                    }
+                }
+            }
+        }
+        return null;
     }
 
     /** Returns a typed expression whose GCP outline equals the element type of {@code iterNode}. */
@@ -196,19 +228,17 @@ public class CallConverter extends PyConverter {
             }
 
             // ── mutations that return None ────────────────────────────────────
+            // Token data must be non-null — use Token.unit() (Python None / GCP Unit).
             case "append", "extend",  "insert",  "remove",  "discard",
-                 "add",    "clear",   "sort",    "reverse", "update",
+                 "add",    "clear",   "sort",    "reverse",
                  "__setitem__"
-                    -> LiteralNode.parse(ast, new Token<>(null, 0));
+                    -> LiteralNode.parse(ast, Token.unit());
 
-            // ── P9: dict built-in methods — pass through to GCP's Dict.loadBuiltInMethods ──
-            // Returning null here bypasses P7 desugaring and lets the outer convert() method
-            // produce FunctionCallNode(MemberAccessor(recv, "keys/values/items"), []), which
-            // MemberAccessorInference resolves via Dict.loadBuiltInMethods().
-            // keys()   → Array<K>  (all keys as list)
-            // values() → Array<V>  (all values as list)
-            // items()  → pass-through (GCP does not model items yet; gives UNKNOWN gracefully)
-            case "keys", "values", "items", "setdefault" -> null;
+            // ── P9: dict built-in methods — pass through to GCP Dict builtins ──
+            // Returning null bypasses this table so convert() builds
+            // FunctionCallNode(MemberAccessor(recv, name), args).
+            // update(...) must pass through (was NPE via Token(null); also needed for dicts/update).
+            case "keys", "values", "items", "setdefault", "update" -> null;
 
             default -> {
                 // P7: user-defined class method — desugar obj.method(args) → method(obj, args).
