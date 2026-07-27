@@ -43,7 +43,7 @@ class GeneralizationRegressionTest {
                 """);
         PythonInferencer.InferResult r = inferencer.inferFileDetailed(py.toFile());
         List<Map<String, Object>> sites =
-                new TypeEvalPySiteExporter().collect(r.ast(), "keys.py", r.pyAst());
+                new TypeEvalPySiteExporter().collect(r.inference());
 
         assertTrue(sites.stream().anyMatch(s -> "d['foo']".equals(s.get("variable"))),
                 () -> "literal key 'foo' should project d['foo']: " + sites);
@@ -64,7 +64,7 @@ class GeneralizationRegressionTest {
                 """);
         PythonInferencer.InferResult r = inferencer.inferFileDetailed(py.toFile());
         List<Map<String, Object>> sites =
-                new TypeEvalPySiteExporter().collect(r.ast(), "ret_dict.py", r.pyAst());
+                new TypeEvalPySiteExporter().collect(r.inference());
 
         assertTrue(sites.stream().noneMatch(s -> "m['a']".equals(s.get("variable"))),
                 () -> "empty/unknown dict must not invent m['a']: " + sites);
@@ -82,7 +82,7 @@ class GeneralizationRegressionTest {
                 """);
         PythonInferencer.InferResult r = inferencer.inferFileDetailed(py.toFile());
         List<Map<String, Object>> sites =
-                new TypeEvalPySiteExporter().collect(r.ast(), "ret_keyed.py", r.pyAst());
+                new TypeEvalPySiteExporter().collect(r.inference());
 
         Set<String> vars = sites.stream()
                 .map(s -> s.get("variable"))
@@ -105,11 +105,10 @@ class GeneralizationRegressionTest {
                     def run(self):
                         return "x"
                 """;
-        String stub = inferencer.toStub(src);
-        assertTrue(stub.contains("class A") && stub.contains("class B"), () -> stub);
-        // Meridian must not collapse both run() returns to one guessed type.
-        assertTrue(stub.contains("int") || stub.contains("1"), () -> stub);
-        assertTrue(stub.contains("str") || stub.contains("String"), () -> stub);
+        PythonInferenceResult inf = new PythonInferencer().inferDetailed(src);
+        assertEquals(List.of("int"), inf.methodReturns().get("A.run"));
+        assertEquals(List.of("str"), inf.methodReturns().get("B.run"));
+        assertNotEquals(inf.methodReturns().get("A.run"), inf.methodReturns().get("B.run"));
     }
 
     @Test
@@ -117,18 +116,54 @@ class GeneralizationRegressionTest {
         PythonInferencer local = new PythonInferencer();
         local.registerModule("mod_a", "def f():\n    return 1\n");
         local.registerModule("mod_b", "def f():\n    return 'hi'\n");
-        String src = """
+        PythonInferenceResult inf = local.inferDetailed("""
                 from mod_a import f as fa
                 from mod_b import f as fb
                 x = fa()
                 y = fb()
-                """;
-        String stub = local.toStub(src);
-        assertNotNull(stub);
-        // Correctness over precision: distinct bindings must not both become the same forced type
-        // via first-match foreign lookup. At minimum stub generation must succeed.
-        assertTrue(stub.contains("x") || stub.contains("y") || stub.contains("fa"),
-                () -> stub);
+                """);
+        assertEquals(List.of("int"), inf.callResults().get("x"),
+                () -> String.valueOf(inf.callResults()));
+        assertEquals(List.of("str"), inf.callResults().get("y"),
+                () -> String.valueOf(inf.callResults()));
+        List<Map<String, Object>> sites = new TypeEvalPySiteExporter().collect(inf);
+        Map<String, Object> x = sites.stream()
+                .filter(s -> "x".equals(s.get("variable")))
+                .findFirst()
+                .orElse(null);
+        Map<String, Object> y = sites.stream()
+                .filter(s -> "y".equals(s.get("variable")))
+                .findFirst()
+                .orElse(null);
+        assertNotNull(x, () -> String.valueOf(sites));
+        assertNotNull(y, () -> String.valueOf(sites));
+        assertTrue(((List<?>) x.get("type")).contains("int"), () -> String.valueOf(x));
+        assertTrue(((List<?>) y.get("type")).contains("str"), () -> String.valueOf(y));
+    }
+
+    @Test
+    void self_attr_delegation_reaches_sites_fr() throws Exception {
+        Path py = tmp.resolve("delegate.py");
+        Files.writeString(py, """
+                class A:
+                    def helper(self):
+                        return "hi"
+
+                    def __init__(self):
+                        self.cb = self.helper
+
+                    def run(self):
+                        return self.cb()
+                """);
+        PythonInferencer.InferResult r = new PythonInferencer().inferFileDetailed(py.toFile());
+        assertEquals(List.of("str"), r.inference().methodReturns().get("A.run"));
+        List<Map<String, Object>> sites = new TypeEvalPySiteExporter().collect(r.inference());
+        assertTrue(sites.stream().anyMatch(s ->
+                        "A.run".equals(s.get("function"))
+                                && !s.containsKey("parameter")
+                                && !s.containsKey("variable")
+                                && ((List<?>) s.get("type")).contains("str")),
+                () -> String.valueOf(sites));
     }
 
     @Test

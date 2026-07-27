@@ -56,6 +56,12 @@ public class TypeEvalPySiteExporter {
     /** Shared semantic refine result for the current {@link #collect} invocation. */
     private PythonInferenceResult sharedInference;
 
+    /**
+     * When true, skip exporter-local sibling directory scans — the shared refine
+     * already resolved import-needed modules (registry / precise siblings).
+     */
+    private boolean skipForeignSummaries;
+
     public List<Map<String, Object>> collect(AST ast, String fileName) {
         return collect(ast, fileName, null, null, null);
     }
@@ -94,12 +100,14 @@ public class TypeEvalPySiteExporter {
     public List<Map<String, Object>> collect(AST ast, String fileName, Map<String, Object> pyAst,
                                             Path sourcePath, PythonInferenceResult inference) {
         sharedInference = inference;
+        skipForeignSummaries = inference != null;
         try {
             List<Map<String, Object>> sites = new ArrayList<>();
             walkBody(ast.program().body(), fileName, sites);
             if (pyAst != null) {
                 if (sharedInference == null) {
                     sharedInference = new PythonSemanticRefiner().refine(ast, pyAst, fileName, sourcePath);
+                    skipForeignSummaries = false;
                 }
                 enrichFromPythonAst(sites, pyAst, fileName, sourcePath);
                 applySharedContainerElements(sites, fileName);
@@ -109,6 +117,7 @@ public class TypeEvalPySiteExporter {
             return sites;
         } finally {
             sharedInference = null;
+            skipForeignSummaries = false;
         }
     }
 
@@ -235,7 +244,14 @@ public class TypeEvalPySiteExporter {
         // Fill FR/FP gaps from py AST (dual cols, AugAssign FPs, return heuristics).
         ensureFunctionSitesFromPyAst(sites, pyModule, fileName);
         emitClassBodyAttrs(sites, pyModule, fileName);
-        fixDelegatingMethodReturns(sites, pyModule, fileName);
+        // Prefer shared self.attr / method returns; fall back to exporter-local pass.
+        if (sharedInference != null && !sharedInference.methodReturns().isEmpty()) {
+            applySharedMethodReturns(sites, fileName);
+        } else {
+            fixDelegatingMethodReturns(sites, pyModule, fileName);
+        }
+        // Seed container LVs before expandNameBinding so we never invent keys.
+        applySharedContainerElements(sites, fileName);
         Map<String, List<String>> frTypes = indexFrTypes(sites);
         // Interleave bind + refine so a=b=func1; c=b(); a=b=func2 keeps c=str.
         for (Map<String, Object> stmt : PyConverter.listOf(pyModule, "body")) {
@@ -245,11 +261,16 @@ public class TypeEvalPySiteExporter {
             emitCallResultElements(sites, stmt, fileName, callReturns, frTypes, dictLits);
         }
         // Re-resolve return self.attr now that Class.attr LVs exist (base_class_attr).
-        refineSelfAttrMethodReturns(sites, pyModule, fileName);
+        if (sharedInference == null || sharedInference.methodReturns().isEmpty()) {
+            refineSelfAttrMethodReturns(sites, pyModule, fileName);
+        }
         // Module-level use sites: imports, attr loads, dict stores, lambdas, .copy().
         Map<String, String> importAliases = collectImportAliases(pyModule);
+        // Shared refine already indexes registered + import-needed sibling modules.
         Map<String, Map<String, List<String>>> foreign =
-                loadSiblingSummaries(sourcePath, importAliases);
+                skipForeignSummaries
+                        ? Map.of()
+                        : loadSiblingSummaries(sourcePath, importAliases);
         emitUseSiteAdapters(sites, pyModule, fileName, listLits, dictLits, callReturns,
                 importAliases, foreign);
         // Re-qualify in case ensureFunctionSites added bare method FRs.
@@ -425,8 +446,7 @@ public class TypeEvalPySiteExporter {
                 if (!var.equals(s.get("variable"))) continue;
                 Object cur = s.get("type");
                 if (cur instanceof List<?> list && !list.isEmpty()
-                        && !list.equals(List.of("callable"))
-                        && !list.equals(List.of("Any"))) {
+                        && !shouldPreferSharedTypes(list, types)) {
                     updated = true;
                     continue;
                 }
@@ -439,9 +459,32 @@ public class TypeEvalPySiteExporter {
         }
     }
 
+    /** Prefer shared concrete tokens over nominal {@code mod.fn} / weak placeholders. */
+    private static boolean shouldPreferSharedTypes(List<?> current, List<String> shared) {
+        if (shared == null || shared.isEmpty()) return false;
+        if (current == null || current.isEmpty()) return true;
+        if (current.equals(List.of("callable")) || current.equals(List.of("Any"))
+                || current.equals(List.of("Nonetype"))) {
+            return true;
+        }
+        boolean sharedConcrete = shared.stream().allMatch(TypeEvalPySiteExporter::isConcretePyType);
+        if (!sharedConcrete) return false;
+        // Nominal module.or.Class tokens lose to int/str/…
+        return current.stream().anyMatch(o -> {
+            String s = String.valueOf(o);
+            return s.contains(".") || "callable".equals(s);
+        });
+    }
+
+    private static boolean isConcretePyType(String t) {
+        return t != null && Set.of("int", "str", "float", "bool", "list", "dict", "tuple", "set")
+                .contains(t);
+    }
+
     /** Apply shared method returns onto weak FR sites (self.attr delegation). */
     private void applySharedMethodReturns(List<Map<String, Object>> sites, String fileName) {
         if (sharedInference == null) return;
+        Map<String, Object> py = sharedInference.pyAst();
         for (Map.Entry<String, List<String>> e : sharedInference.methodReturns().entrySet()) {
             String qname = e.getKey();
             List<String> types = e.getValue();
@@ -452,18 +495,48 @@ public class TypeEvalPySiteExporter {
                 if (!qname.equals(s.get("function"))) continue;
                 Object cur = s.get("type");
                 if (cur instanceof List<?> list && !list.isEmpty()
-                        && !list.equals(List.of("callable"))
-                        && !list.equals(List.of("Nonetype"))) {
+                        && !shouldPreferSharedTypes(list, types)) {
                     touched = true;
                     continue;
                 }
                 s.put("type", types);
                 touched = true;
             }
-            if (!touched) {
-                // No FR site yet — leave to ensureFunctionSites; don't invent locs.
+            if (!touched && py != null) {
+                int[] loc = findMethodLoc(py, qname);
+                if (loc != null) {
+                    forceEnsureFr(sites, fileName, loc[0], loc[1], qname, types);
+                    if (loc[2] >= 0 && loc[2] != loc[1]) {
+                        forceEnsureFr(sites, fileName, loc[0], loc[2], qname, types);
+                    }
+                }
             }
         }
+    }
+
+    /** @return {@code [line, nameCol0, defCol0]} or null */
+    private static int[] findMethodLoc(Map<String, Object> pyModule, String qname) {
+        int dot = qname.indexOf('.');
+        if (dot <= 0) return null;
+        String cls = qname.substring(0, dot);
+        String method = qname.substring(dot + 1);
+        for (Map<String, Object> stmt : PyConverter.listOf(pyModule, "body")) {
+            if (!"ClassDef".equals(PyConverter.typeOf(stmt))) continue;
+            if (!cls.equals(PyConverter.strOf(stmt, "name"))) continue;
+            for (Map<String, Object> body : PyConverter.listOf(stmt, "body")) {
+                if (!"FunctionDef".equals(PyConverter.typeOf(body))
+                        && !"AsyncFunctionDef".equals(PyConverter.typeOf(body))) {
+                    continue;
+                }
+                if (!method.equals(PyConverter.strOf(body, "name"))) continue;
+                int line = PyConverter.lineOf(body);
+                int nameCol = PyConverter.functionNameCol(body);
+                int defCol = PyConverter.colOf(body);
+                if (line < 0 || nameCol < 0) return null;
+                return new int[]{line, nameCol, defCol};
+            }
+        }
+        return null;
     }
 
     private void ensureFunctionsInStmt(List<Map<String, Object>> sites,
@@ -1955,45 +2028,7 @@ public class TypeEvalPySiteExporter {
     }
 
     private static List<String> literalType(Map<String, Object> node) {
-        if (node == null) return List.of();
-        String t = PyConverter.typeOf(node);
-        if ("Constant".equals(t)) {
-            Object v = node.get("value");
-            if (v instanceof Integer || v instanceof Long) return List.of("int");
-            if (v instanceof Double || v instanceof Float) return List.of("float");
-            if (v instanceof Boolean) return List.of("bool");
-            if (v instanceof String) return List.of("str");
-            if (v == null) return List.of("Nonetype");
-        }
-        // -5 is UnaryOp(USub, Constant(5)) in CPython AST
-        if ("UnaryOp".equals(t)) {
-            String op = PyConverter.typeOf(PyConverter.mapOf(node, "op"));
-            List<String> inner = literalType(PyConverter.mapOf(node, "operand"));
-            if (("USub".equals(op) || "UAdd".equals(op)) && !inner.isEmpty()) return inner;
-        }
-        if ("List".equals(t) || "ListComp".equals(t)) return List.of("list");
-        if ("Dict".equals(t) || "DictComp".equals(t)) return List.of("dict");
-        if ("Tuple".equals(t)) return List.of("tuple");
-        if ("Set".equals(t) || "SetComp".equals(t)) return List.of("set");
-        if ("Call".equals(t)) {
-            Map<String, Object> func = PyConverter.mapOf(node, "func");
-            if ("Name".equals(PyConverter.typeOf(func))) {
-                String n = PyConverter.strOf(func, "id");
-                if ("set".equals(n)) return List.of("set");
-                if ("dict".equals(n)) return List.of("dict");
-                if ("list".equals(n)) return List.of("list");
-                if ("tuple".equals(n)) return List.of("tuple");
-                // Class instantiation MyClass() → nominal type MyClass
-                if (n != null && !n.isEmpty() && Character.isUpperCase(n.charAt(0))) {
-                    return List.of(n);
-                }
-            }
-            return List.of("callable");
-        }
-        if ("Name".equals(t) || "Attribute".equals(t) || "Lambda".equals(t)) {
-            return List.of("callable");
-        }
-        return List.of();
+        return PythonSemanticRefiner.literalType(node);
     }
 
     private static String constantKey(Map<String, Object> keyNode) {
