@@ -118,13 +118,14 @@ Only after Phase 2 is solid: scale exporter + timeouts + remaining Python-only f
 ## Immediate next actions (resume here)
 
 1. ~~Phase 0–1~~ — CLI + sites + line/col.
-2. ~~Phase 2 progress harness~~ — `scripts/run-typeevalpy-micro-progress.py` scores
-   Meridian against the **latest Outline** fact inventory
-   (`TYPEEVALPY-FACT-MANIFEST.csv`, release `toplas-typeevalpy-513`).
-   Results: `meridian-python/docs/typeevalpy-micro-progress.{md,json}`.
-3. **Next**: raise `N/513` via Meridian adapters; wire
-   `typeevalpy-adapter/` into a TypeEvalPy Docker tree (`pysonar2`-shaped).
+2. ~~Phase 2 progress harness~~ — TypeEvalPy micro strict/compat **513/513**
+   (`meridian-python/docs/typeevalpy-micro-progress.{md,json}`).
+3. **Active — Phase 4 mypyc productization** (Meridian result → compile, not raw GCP):
+   - `meridian compile` + `CompilePipeline` (annotate / specialize / mypyc / optional bench)
+   - Multi-concrete Outline call-site bindings → dispatcher + clones (any types)
+   - Plan: `meridian-python/docs/mypyc-compile-and-ide-plan.md` (IDE parked)
 4. Keep Outline toplas **read-only** for Meridian demos (do not edit frozen 513 claim).
+5. Later: Phase 3 IDE/LSP; optional TypeEvalPy Docker adapter polish.
 
 ### Outline reference (keep current)
 

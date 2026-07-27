@@ -1,6 +1,7 @@
 package org.twelve.meridian.python.cli;
 
 import org.twelve.meridian.python.AnnotationPolicy;
+import org.twelve.meridian.python.CompilePipeline;
 import org.twelve.meridian.python.PythonAnnotationWriter;
 import org.twelve.meridian.python.PythonInferencer;
 import org.twelve.meridian.python.TypeAnnotationGenerator;
@@ -19,13 +20,16 @@ import java.util.Map;
  * Meridian product CLI.
  *
  * <pre>
- *   meridian infer  path.py [-o out.py] [--annotate-all]
- *   meridian stub   path.py [-o out.pyi]
- *   meridian sites  path.py [-o main_result.json]
+ *   meridian infer   path.py [-o out.py] [--annotate-all]
+ *   meridian stub    path.py [-o out.pyi]
+ *   meridian sites   path.py [-o main_result.json]
+ *   meridian compile path.py [-o out_dir] [--calls usage.py|--calls-inline CODE]
+ *                    [--specialize|--no-specialize] [--annotate-all] [--bench cases.json]
  * </pre>
  *
- * <p>{@code infer} defaults to {@link AnnotationPolicy#SAFE_PARTIAL} (concrete,
- * complete signatures only). Pass {@code --annotate-all} for aggressive injection.
+ * <p>{@code infer}/{@code compile} default to {@link AnnotationPolicy#SAFE_PARTIAL}.
+ * {@code compile} with usage context monomorphizes every distinct concrete
+ * call-site type tuple (Outline optional/parametric bindings — not only str/int).
  */
 public final class MeridianCli {
 
@@ -53,7 +57,7 @@ public final class MeridianCli {
             System.out.println("meridian " + VERSION);
             return 0;
         }
-        if (!"infer".equals(cmd) && !"stub".equals(cmd) && !"sites".equals(cmd)) {
+        if (!List.of("infer", "stub", "sites", "compile").contains(cmd)) {
             System.err.println("Unknown command: " + cmd);
             printHelp(System.err);
             return 2;
@@ -62,6 +66,12 @@ public final class MeridianCli {
         List<String> rest = new ArrayList<>();
         Path out = null;
         boolean annotateAll = false;
+        boolean specialize = true;
+        boolean specializeExplicit = false;
+        Path callsFile = null;
+        String callsInline = null;
+        Path benchFile = null;
+
         for (int i = 1; i < args.length; i++) {
             String a = args[i];
             if ("-o".equals(a) || "--output".equals(a)) {
@@ -72,6 +82,30 @@ public final class MeridianCli {
                 out = Path.of(args[++i]);
             } else if ("--annotate-all".equals(a)) {
                 annotateAll = true;
+            } else if ("--specialize".equals(a)) {
+                specialize = true;
+                specializeExplicit = true;
+            } else if ("--no-specialize".equals(a)) {
+                specialize = false;
+                specializeExplicit = true;
+            } else if ("--calls".equals(a)) {
+                if (i + 1 >= args.length) {
+                    System.err.println("--calls requires a path");
+                    return 2;
+                }
+                callsFile = Path.of(args[++i]);
+            } else if ("--calls-inline".equals(a)) {
+                if (i + 1 >= args.length) {
+                    System.err.println("--calls-inline requires a code string");
+                    return 2;
+                }
+                callsInline = args[++i];
+            } else if ("--bench".equals(a)) {
+                if (i + 1 >= args.length) {
+                    System.err.println("--bench requires a cases JSON path or literal");
+                    return 2;
+                }
+                benchFile = Path.of(args[++i]);
             } else if ("-h".equals(a) || "--help".equals(a)) {
                 printHelp(System.out);
                 return 0;
@@ -83,11 +117,20 @@ public final class MeridianCli {
             }
         }
         if (rest.size() != 1) {
-            System.err.println("Usage: meridian " + cmd + " <file.py> [-o path] [--annotate-all]");
+            System.err.println("Usage: meridian " + cmd + " <file.py> [options]");
             return 2;
         }
-        if (annotateAll && !"infer".equals(cmd)) {
-            System.err.println("--annotate-all is only valid with 'infer'");
+        if (annotateAll && !"infer".equals(cmd) && !"compile".equals(cmd)) {
+            System.err.println("--annotate-all is only valid with 'infer' or 'compile'");
+            return 2;
+        }
+        if ((callsFile != null || callsInline != null || specializeExplicit || benchFile != null)
+                && !"compile".equals(cmd)) {
+            System.err.println("--calls/--specialize/--bench are only valid with 'compile'");
+            return 2;
+        }
+        if (callsFile != null && callsInline != null) {
+            System.err.println("Use only one of --calls or --calls-inline");
             return 2;
         }
 
@@ -98,11 +141,12 @@ public final class MeridianCli {
         }
 
         try {
-            boolean finalAnnotateAll = annotateAll;
             return switch (cmd) {
                 case "stub" -> writeStub(input, out);
                 case "sites" -> writeSites(input, out);
-                default -> writeAnnotated(input, out, finalAnnotateAll);
+                case "compile" -> writeCompile(input, out, annotateAll, specialize,
+                        callsFile, callsInline, benchFile);
+                default -> writeAnnotated(input, out, annotateAll);
             };
         } catch (IOException e) {
             System.err.println("I/O error: " + e.getMessage());
@@ -141,6 +185,81 @@ public final class MeridianCli {
         return emit(json, out);
     }
 
+    private static int writeCompile(File input, Path out, boolean annotateAll, boolean specialize,
+                                    Path callsFile, String callsInline, Path benchFile)
+            throws IOException {
+        String source = Files.readString(input.toPath(), StandardCharsets.UTF_8);
+        String usage = null;
+        if (callsFile != null) {
+            if (!Files.isRegularFile(callsFile)) {
+                System.err.println("Not a file: " + callsFile);
+                return 1;
+            }
+            usage = Files.readString(callsFile, StandardCharsets.UTF_8);
+        } else if (callsInline != null) {
+            usage = callsInline;
+        }
+
+        String benchJson = null;
+        if (benchFile != null) {
+            if (Files.isRegularFile(benchFile)) {
+                benchJson = Files.readString(benchFile, StandardCharsets.UTF_8).trim();
+            } else {
+                // Allow inline JSON literal as the "path" argument value.
+                benchJson = benchFile.toString();
+            }
+        }
+
+        Path outDir = out != null ? out : input.toPath().resolveSibling(
+                baseName(input) + "_meridian_out");
+        Files.createDirectories(outDir);
+
+        AnnotationPolicy policy = annotateAll
+                ? AnnotationPolicy.ALL_CONCRETE
+                : AnnotationPolicy.SAFE_PARTIAL;
+
+        // Specialize whenever usage is present unless user passed --no-specialize.
+        boolean doSpecialize = specialize && usage != null && !usage.isBlank();
+
+        CompilePipeline.Outcome outcome = new CompilePipeline().run(new CompilePipeline.Request(
+                source,
+                baseName(input),
+                usage,
+                doSpecialize,
+                policy,
+                outDir,
+                benchJson
+        ));
+
+        System.err.println("Annotated: " + outcome.annotatedFile().toAbsolutePath());
+        if (outcome.specialized()) {
+            System.err.println("Specialized: yes (" + outcome.plan().size()
+                    + " function(s); multi-concrete call-site tuples → clones + dispatcher)");
+        }
+        if (!outcome.compileResult().success()) {
+            System.err.println("mypyc failed:");
+            System.err.println(outcome.compileResult().stderr());
+            // Still print annotated source to stdout for inspection.
+            System.out.print(outcome.annotatedSource());
+            if (!outcome.annotatedSource().endsWith("\n")) System.out.println();
+            return 1;
+        }
+        System.err.println("Compiled:  " + outcome.compileResult().outputFile());
+        if (outcome.benchJson() != null) {
+            System.out.println(outcome.benchJson());
+        } else {
+            System.out.print(outcome.annotatedSource());
+            if (!outcome.annotatedSource().endsWith("\n")) System.out.println();
+        }
+        return 0;
+    }
+
+    private static String baseName(File f) {
+        String name = f.getName();
+        int dot = name.lastIndexOf('.');
+        return dot > 0 ? name.substring(0, dot) : name;
+    }
+
     private static int emit(String text, Path out) throws IOException {
         if (out == null) {
             System.out.print(text);
@@ -159,19 +278,24 @@ public final class MeridianCli {
     }
 
     private static void printHelp(java.io.PrintStream ps) {
-        ps.println("Meridian — GCP Python type inferencer");
+        ps.println("Meridian — GCP Python type inferencer / mypyc compile");
         ps.println();
         ps.println("Usage:");
         ps.println("  meridian infer <file.py> [-o out.py] [--annotate-all]");
-        ps.println("      Annotate source (PEP 484). Default is conservative (SAFE_PARTIAL):");
-        ps.println("      only concrete, complete function signatures. --annotate-all injects");
-        ps.println("      every concrete slot even when a signature is incomplete.");
-        ps.println("  meridian stub  <file.py> [-o out.pyi]           Emit .pyi stub");
-        ps.println("  meridian sites <file.py> [-o main_result.json]  TypeEvalPy site JSON");
-        ps.println("  meridian version");
-        ps.println("  meridian help");
+        ps.println("      Annotate source (PEP 484). Default SAFE_PARTIAL.");
+        ps.println("  meridian stub  <file.py> [-o out.pyi]");
+        ps.println("  meridian sites <file.py> [-o main_result.json]");
+        ps.println("  meridian compile <file.py> [-o out_dir]");
+        ps.println("      [--calls usage.py | --calls-inline CODE]");
+        ps.println("      [--specialize | --no-specialize] [--annotate-all]");
+        ps.println("      [--bench cases.json]");
+        ps.println("      a) begin compile  b) annotate (+ specialize multi-concrete");
+        ps.println("         Outline/GCP call-site bindings)  c) mypyc  d) optional bench");
+        ps.println("  meridian version | help");
         ps.println();
-        ps.println("See MERIDIAN-PRODUCT-ROADMAP.md for phases (CLI → TypeEvalPy → IDE → mypyc).");
+        ps.println("Specialization is generic: every distinct concrete call-site type");
+        ps.println("tuple (str/int/float/list/…) gets a clone + isinstance dispatcher.");
+        ps.println("See meridian-python/docs/mypyc-compile-and-ide-plan.md");
     }
 
     private MeridianCli() {}

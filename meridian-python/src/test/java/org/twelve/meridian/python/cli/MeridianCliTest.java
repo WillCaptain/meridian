@@ -48,4 +48,27 @@ class MeridianCliTest {
         assertTrue(out.contains("int") || out.contains("->"),
                 "expected some type annotation, got:\n" + out);
     }
+
+    @Test
+    void compile_specializes_multi_concrete_call_sites() throws Exception {
+        Path py = tmp.resolve("poly_cli.py");
+        Files.writeString(py, "def f(x):\n    return x + x\n");
+        Path outDir = tmp.resolve("poly_cli_out");
+
+        // Avoid System.out capture — parallel tests share the JVM streams.
+        int code = MeridianCli.run(new String[]{
+                "compile", py.toString(),
+                "-o", outDir.toString(),
+                "--calls-inline", "f(1)\nf(\"z\")\n",
+                "--annotate-all"
+        });
+        assertEquals(0, code);
+        String annotated = Files.readString(outDir.resolve("poly_cli.py"));
+        assertTrue(annotated.contains("isinstance"), annotated);
+        assertTrue(Files.list(outDir).anyMatch(p -> {
+                    String n = p.getFileName().toString();
+                    return n.endsWith(".so") || n.endsWith(".pyd");
+                }),
+                "mypyc native extension expected in " + outDir);
+    }
 }

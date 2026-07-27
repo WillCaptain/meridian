@@ -139,30 +139,37 @@ public class MypycRunner {
     // ── full pipeline shortcut ─────────────────────────────────────────────────
 
     /**
-     * Run the full meridian-python pipeline on {@code sourceFile}:
-     * <ol>
-     *   <li>Infer types using GCP + semantic refine.</li>
-     *   <li>Write annotated Python to a temp file.</li>
-     *   <li>Compile the annotated file with mypyc.</li>
-     * </ol>
+     * Run the Meridian product pipeline on {@code sourceFile}:
+     * infer (GCP inside Meridian) → annotate → mypyc.
      *
-     * @return the mypyc compilation result
+     * <p>Compiles <strong>Meridian</strong> annotated output, not raw GCP AST.
      */
     public CompileResult inferAndCompile(File sourceFile) throws IOException {
+        return inferAndCompile(sourceFile, null);
+    }
+
+    /**
+     * Same as {@link #inferAndCompile(File)}, with optional usage/call-site
+     * context for demand-driven annotate and multi-concrete specialization.
+     *
+     * @param usageSource call-site Python (may be {@code null})
+     */
+    public CompileResult inferAndCompile(File sourceFile, String usageSource) throws IOException {
         String source = Files.readString(sourceFile.toPath(), StandardCharsets.UTF_8);
-
-        PythonInferencer inferencer = new PythonInferencer();
-        PythonInferencer.InferResult inferred = inferencer.inferFileDetailed(sourceFile);
-
-        PythonAnnotationWriter writer = new PythonAnnotationWriter();
         Path tmpDir = Files.createTempDirectory("meridian_mypyc_");
         String baseName = baseNameOf(sourceFile);
-        Path annotatedPath = tmpDir.resolve(baseName + "_annotated.py");
-        String annotated = writer.annotate(source, inferred.inference());
-        Files.writeString(annotatedPath, annotated, StandardCharsets.UTF_8);
+        boolean specialize = usageSource != null && !usageSource.isBlank();
 
-        CompileResult result = compile(annotatedPath.toFile(), tmpDir.toFile());
+        CompilePipeline.Outcome outcome = new CompilePipeline().run(new CompilePipeline.Request(
+                source,
+                baseName,
+                usageSource,
+                specialize,
+                AnnotationPolicy.defaultPolicy(),
+                tmpDir,
+                null));
 
+        CompileResult result = outcome.compileResult();
         if (result.success() && result.outputFile() != null) {
             Path dest = sourceFile.toPath().resolveSibling(result.outputFile().getName());
             Files.copy(result.outputFile().toPath(), dest, StandardCopyOption.REPLACE_EXISTING);

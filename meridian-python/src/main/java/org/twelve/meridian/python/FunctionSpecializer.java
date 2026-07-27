@@ -19,42 +19,45 @@ import java.util.stream.Collectors;
  * Monomorphization for Python functions via call-site analysis.
  *
  * <h2>Motivation</h2>
- * GCP's type system is parametrically polymorphic: {@code let f = x -> x} leaves
- * {@code x} as a generic type variable.  At a call site {@code f(10)}, GCP can
- * determine that {@code x: Integer} for that particular invocation.
+ * GCP/Outline treat parametric functions as optional at definition time
+ * ({@code let f = x -> x} leaves {@code x} open). Each call site may bind a
+ * different concrete type — {@code f("s")} vs {@code f(1)}, {@code add(1,2)} vs
+ * {@code add(1.0,2.0)}, container variants, etc. {@code str}/{@code int} is only
+ * one instance of that pattern; <strong>every</strong> distinct concrete
+ * call-site type tuple is handled the same way.
  *
- * <p>This class exploits that knowledge to generate <em>type-specialized</em>
- * copies of Python functions — one per unique argument-type tuple observed at
- * call sites.  Each copy carries concrete type annotations, enabling mypyc to
- * generate fully-typed C extensions.
+ * <p>This class generates <em>type-specialized</em> copies — one per unique
+ * argument-type tuple — so mypyc receives fully concrete annotations.
  *
  * <h2>Strategy</h2>
  * <pre>
- *   def add(x, y): return x + y
+ *   def f(x): return x + x
  *
- *   Call sites (usage context):
- *     add(1, 2)       → (int, int)
- *     add(1.0, 2.0)   → (float, float)
+ *   Call sites (any concrete Outline/GCP bindings):
+ *     f(1) / f(2)           → (int,)
+ *     f("a") / f("bb")      → (str,)
+ *     f(1.0)                → (float,)   # same rule, other types
  *
- *   Generated specializations:
- *     def add(x: int,   y: int)   -> int:   return x + y   # original rewritten
- *     def _add_float(x: float, y: float) -> float: return x + y
- *     # dispatcher: if all sites use same type, only one version is emitted.
+ *   Generated:
+ *     def f(x):                      # isinstance dispatcher
+ *         if isinstance(x, int): return _f_int(x)
+ *         if isinstance(x, str): return _f_str(x)
+ *         ...
+ *     def _f_int(x: int) -> int: ...
+ *     def _f_str(x: str) -> str: ...
  * </pre>
  *
  * <h2>Naming convention</h2>
  * <ul>
- *   <li>If every call site uses the same type, the <em>original</em> function is
- *       annotated in place — no new name.</li>
- *   <li>If multiple type combinations exist, the dominant (most frequent) type
- *       annotates the original; additional specializations get a suffix:
- *       {@code _add_float}, {@code _add_int_str}, …</li>
+ *   <li>One concrete type tuple → annotate the original in place.</li>
+ *   <li>Multiple concrete tuples → dispatcher at the original name +
+ *       {@code _name_<typesig>} clones for every tuple.</li>
  * </ul>
  *
  * <h2>Constraints</h2>
  * No GCP code is modified.  Specialization is a pure post-processing step in
- * meridian that rewrites Python source text using the type information that GCP
- * already exposes through call-site argument outlines.
+ * meridian that rewrites Python source text using call-site argument outlines.
+ * Call sites whose argument outlines are not concrete PEP-484 types are ignored.
  */
 public class FunctionSpecializer {
 
@@ -140,8 +143,18 @@ public class FunctionSpecializer {
                         // fall back to body-inferred return type, then to projecting from arg types
                         String specRet = retMap.getOrDefault(fname, Map.of()).get(e.getKey());
                         String retType = (specRet != null) ? specRet : bodyRet;
-                        // If still null, project: e.g. int×int→int, float×float→float
-                        if (retType == null) retType = projectNumericReturn(e.getKey());
+                        // Body inference often stays on the numeric tower (Addable →
+                        // Union[int,float]) even for str/str call sites. Prefer a
+                        // homogeneous projection from the concrete arg tuple.
+                        String projected = projectReturnFromArgTypes(e.getKey());
+                        if (projected != null
+                                && (retType == null
+                                || retType.equals("Union[int, float]")
+                                || retType.equals("float")
+                                || !AnnotationPolicy.isConcrete(retType))) {
+                            retType = projected;
+                        }
+                        if (retType == null) retType = projected;
                         return new TypeBinding(fname, params, e.getKey(), retType);
                     })
                     .toList();
@@ -155,39 +168,153 @@ public class FunctionSpecializer {
      * Rewrite {@code originalSource} according to the specialization plan.
      *
      * <ul>
-     *   <li>The <em>primary</em> (most-frequent) type binding is applied to the
-     *       original function definition in place.</li>
-     *   <li>Additional (secondary) type bindings are appended as new function
-     *       definitions with suffixed names; their recursive calls are rewritten
-     *       to use the same suffixed name.</li>
+     *   <li>Module-level {@code name = lambda ...} forms for planned functions
+     *       are lifted to {@code def} so mypyc can annotate them.</li>
+     *   <li>Monomorphic functions: annotate the original definition in place.</li>
+     *   <li>Polymorphic functions (any multi-concrete Outline/GCP call-site
+     *       bindings — not limited to {@code str}/{@code int}): emit one
+     *       {@code _name_typesig} clone per tuple and replace the original name
+     *       with an {@code isinstance} dispatcher.</li>
      * </ul>
      */
     public String specialize(String originalSource, Map<String, FuncSpecializations> plan) {
-        String source = originalSource;
+        if (plan == null || plan.isEmpty()) return originalSource;
 
-        // ── pass 1: annotate original functions in place ───────────────────────
-        for (FuncSpecializations fs : plan.values()) {
-            TypeBinding primary = fs.primary();
-            source = annotateInPlace(source, primary.funcName(),
-                    primary.paramNames(), primary.argTypes(), primary.returnType());
-        }
+        String source = convertPlannedLambdasToDefs(originalSource, plan.keySet());
+        // Snapshot for extracting bodies before headers are rewritten.
+        String defSource = source;
 
-        // ── pass 2: append extra specializations for secondary type tuples ─────
         StringBuilder extra = new StringBuilder();
         for (FuncSpecializations fs : plan.values()) {
-            if (fs.isMonomorphic()) continue;   // nothing extra to emit
-            for (int i = 1; i < fs.bindings().size(); i++) {
-                TypeBinding sec = fs.bindings().get(i);
-                String specFunc = buildSpecializedFunction(
-                        originalSource, sec, false);
+            if (fs.isMonomorphic()) {
+                TypeBinding primary = fs.primary();
+                source = annotateInPlace(source, primary.funcName(),
+                        primary.paramNames(), primary.argTypes(), primary.returnType());
+                continue;
+            }
+
+            // Polymorphic: every binding becomes a concrete clone; original → dispatcher.
+            for (TypeBinding binding : fs.bindings()) {
+                String specFunc = buildSpecializedFunction(defSource, binding, false);
                 if (specFunc != null) extra.append(specFunc);
+            }
+            String dispatcher = buildDispatcher(fs);
+            String replaced = replaceFunctionBlock(source, fs.funcName(), dispatcher);
+            if (replaced != null) {
+                source = replaced;
+            } else {
+                // No def block found — append dispatcher after extras.
+                extra.append(dispatcher);
             }
         }
         if (!extra.isEmpty()) {
             source = source + "\n# ── GCP demand-driven specializations ─────────────────\n"
                     + extra;
         }
-        return source;
+        return ensureTypingImports(source);
+    }
+
+    /**
+     * Whether the plan contains any function with multiple concrete type tuples.
+     */
+    public static boolean needsPolymorphicDispatch(Map<String, FuncSpecializations> plan) {
+        if (plan == null) return false;
+        return plan.values().stream().anyMatch(fs -> !fs.isMonomorphic());
+    }
+
+    // ── lambda lift / dispatcher / block replace ──────────────────────────────
+
+    /** Lift {@code name = lambda args: body} to a def for each planned name. */
+    static String convertPlannedLambdasToDefs(String source, Set<String> names) {
+        String out = source;
+        for (String name : names) {
+            Pattern p = Pattern.compile(
+                    "^([ \\t]*)" + Pattern.quote(name)
+                            + "[ \\t]*=[ \\t]*lambda[ \\t]*([^:]*):(.*)$",
+                    Pattern.MULTILINE);
+            Matcher m = p.matcher(out);
+            if (!m.find()) continue;
+            String indent = m.group(1);
+            String args = m.group(2).trim();
+            String body = m.group(3).trim();
+            String def = indent + "def " + name + "(" + args + "):\n"
+                    + indent + "    return " + body;
+            out = out.substring(0, m.start()) + def + out.substring(m.end());
+        }
+        return out;
+    }
+
+    static String buildDispatcher(FuncSpecializations fs) {
+        List<String> params = fs.primary().paramNames();
+        String args = String.join(", ", params);
+        StringBuilder sb = new StringBuilder();
+        sb.append("def ").append(fs.funcName()).append("(").append(args).append("):\n");
+        for (TypeBinding b : fs.bindings()) {
+            sb.append("    if ").append(isinstanceGuard(params, b.argTypes())).append(":\n");
+            sb.append("        return ").append(b.specName(false))
+                    .append("(").append(args).append(")\n");
+        }
+        sb.append("    raise TypeError(")
+                .append("\"no Meridian specialization for ").append(fs.funcName()).append("\"")
+                .append(")\n");
+        return sb.toString();
+    }
+
+    private static String isinstanceGuard(List<String> params, List<String> types) {
+        List<String> parts = new ArrayList<>();
+        for (int i = 0; i < params.size(); i++) {
+            String t = (i < types.size()) ? types.get(i) : null;
+            String pyType = runtimeTypeName(t);
+            if (pyType == null) {
+                throw new IllegalStateException(
+                        "Cannot dispatch on non-runtime type: " + t);
+            }
+            parts.add("isinstance(" + params.get(i) + ", " + pyType + ")");
+        }
+        return parts.isEmpty() ? "True" : String.join(" and ", parts);
+    }
+
+    /**
+     * Map a concrete annotation string to a runtime type for {@code isinstance}.
+     * Generic over all concrete Outline/GCP call-site types we can erase to a
+     * Python builtin/constructor — not a {@code str}/{@code int} special case.
+     */
+    static String runtimeTypeName(String typeStr) {
+        if (typeStr == null) return null;
+        String t = typeStr.trim();
+        return switch (t) {
+            case "int" -> "int";
+            case "float" -> "float";
+            case "str" -> "str";
+            case "bool" -> "bool";
+            case "bytes" -> "bytes";
+            case "complex" -> "complex";
+            default -> {
+                if (t.startsWith("list[") || t.equals("list")) yield "list";
+                if (t.startsWith("dict[") || t.equals("dict")) yield "dict";
+                if (t.startsWith("tuple[") || t.equals("tuple")) yield "tuple";
+                if (t.startsWith("set[") || t.equals("set")) yield "set";
+                // Optional[T] / Union[...] are not single runtime tags — skip.
+                yield null;
+            }
+        };
+    }
+
+    /** Replace a top-level function block with {@code replacement} (must end with newline). */
+    static String replaceFunctionBlock(String source, String funcName, String replacement) {
+        String block = extractFunctionBlock(source, funcName);
+        if (block == null) return null;
+        int idx = source.indexOf(block);
+        if (idx < 0) {
+            // extractFunctionBlock may normalize trailing newline — try trim match
+            String trimmed = block.endsWith("\n") ? block.substring(0, block.length() - 1) : block;
+            idx = source.indexOf(trimmed);
+            if (idx < 0) return null;
+            String repl = replacement.endsWith("\n") ? replacement : replacement + "\n";
+            return source.substring(0, idx) + repl + source.substring(idx + trimmed.length());
+        }
+        String repl = replacement.endsWith("\n") ? replacement : replacement + "\n";
+        return source.substring(0, idx) + repl + source.substring(idx + block.length());
     }
 
     // ── in-place annotation ───────────────────────────────────────────────────
@@ -335,23 +462,38 @@ public class FunctionSpecializer {
     // ── type projection helpers ───────────────────────────────────────────────
 
     /**
-     * When GCP cannot determine a concrete return type (null from body inference),
-     * project a best-effort return type from the observed argument types.
-     *
-     * <p>For pure numeric arithmetic functions ({@code int}/{@code float} args only):
-     * <ul>
-     *   <li>all-int  → {@code int}</li>
-     *   <li>any-float → {@code float}</li>
-     * </ul>
-     * Returns {@code null} for anything else (mypyc will still infer from body).
+     * Project a return type from a concrete argument-type tuple.
+     * Generic over Outline call-site bindings (not numeric-only): homogeneous
+     * tuples collapse to that type; numeric towers prefer float when mixed.
      */
-    private static String projectNumericReturn(List<String> argTypes) {
+    static String projectReturnFromArgTypes(List<String> argTypes) {
         if (argTypes == null || argTypes.isEmpty()) return null;
-        boolean hasFloat = argTypes.stream().anyMatch("float"::equals);
+        if (argTypes.stream().anyMatch(t -> t == null || !AnnotationPolicy.isConcrete(t))) {
+            return null;
+        }
+        boolean allSame = argTypes.stream().distinct().count() == 1;
+        if (allSame) return argTypes.getFirst();
         boolean allNumeric = argTypes.stream()
-                .allMatch(t -> t != null && (t.equals("int") || t.equals("float")));
-        if (!allNumeric) return null;
-        return hasFloat ? "float" : "int";
+                .allMatch(t -> t.equals("int") || t.equals("float"));
+        if (allNumeric) {
+            return argTypes.stream().anyMatch("float"::equals) ? "float" : "int";
+        }
+        return null;
+    }
+
+    /** Inject {@code typing} imports required by emitted annotations. */
+    static String ensureTypingImports(String source) {
+        String out = source;
+        if (out.contains("Union[") && !out.contains("import Union")) {
+            out = "from typing import Union\n" + out;
+        }
+        if (out.contains("Optional[") && !out.contains("import Optional")) {
+            out = "from typing import Optional\n" + out;
+        }
+        if (out.contains("Callable[") && !out.contains("import Callable")) {
+            out = "from typing import Callable\n" + out;
+        }
+        return out;
     }
 
     // ── call-site scanner ─────────────────────────────────────────────────────
@@ -367,14 +509,21 @@ public class FunctionSpecializer {
                 List<String> argTypes = call.arguments().stream()
                         .map(arg -> typeGen.outlineToTypeStr(arg.outline()))
                         .toList();
-                freq.computeIfAbsent(fname, k -> new LinkedHashMap<>())
-                    .merge(argTypes, 1, Integer::sum);
+                // Only fully concrete tuples participate — same rule for every
+                // Outline optional/parametric binding (str/int/float/list/…).
+                if (argTypes.stream().allMatch(AnnotationPolicy::isConcrete)
+                        && argTypes.stream().allMatch(t -> runtimeTypeName(t) != null)) {
+                    freq.computeIfAbsent(fname, k -> new LinkedHashMap<>())
+                        .merge(argTypes, 1, Integer::sum);
 
-                // The call expression's outline is the SPECIALIZED return type
-                // (e.g. add(1,2).outline() = INTEGER, not the generic Addable)
-                String specRetType = typeGen.outlineToTypeStr(call.outline());
-                callReturnTypes.computeIfAbsent(fname, k -> new LinkedHashMap<>())
-                               .putIfAbsent(argTypes, specRetType);
+                    // Call expression outline = specialized return for this tuple.
+                    String specRetType = typeGen.outlineToTypeStr(call.outline());
+                    if (specRetType != null && !AnnotationPolicy.isConcrete(specRetType)) {
+                        specRetType = null;
+                    }
+                    callReturnTypes.computeIfAbsent(fname, k -> new LinkedHashMap<>())
+                                   .putIfAbsent(argTypes, specRetType);
+                }
             }
         }
         for (Node child : node.nodes()) {

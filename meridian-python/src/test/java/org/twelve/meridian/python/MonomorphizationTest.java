@@ -83,13 +83,12 @@ class MonomorphizationTest {
         System.out.println(specialized);
 
         // ── assertions ─────────────────────────────────────────────────────────
-        // add: two call-site types (int and float) → original rewritten + extra
-        assertTrue(specialized.contains("def add(x: int, y: int)") ||
-                   specialized.contains("def add(x: int,y: int)") ||
-                   specialized.contains("def add(x: int"),
-                "add should be annotated with int (primary)");
-
-        assertTrue(specialized.contains("def _add_float") || specialized.contains("def add"),
+        // add: two concrete call-site tuples → dispatcher + typed clones
+        assertTrue(specialized.contains("def add(") && specialized.contains("isinstance"),
+                "polymorphic add must become an isinstance dispatcher");
+        assertTrue(specialized.contains("def _add_int") || specialized.contains("_add_int("),
+                "int specialization of add should exist");
+        assertTrue(specialized.contains("def _add_float") || specialized.contains("_add_float("),
                 "float specialization of add should exist");
 
         // power: only int call site → original annotated, no extra version
