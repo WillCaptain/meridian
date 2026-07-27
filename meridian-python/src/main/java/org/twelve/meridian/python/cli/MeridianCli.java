@@ -122,7 +122,7 @@ public final class MeridianCli {
         PythonInferencer.InferResult inferred = new PythonInferencer().inferFileDetailed(input);
         TypeEvalPySiteExporter exporter = new TypeEvalPySiteExporter();
         List<Map<String, Object>> sites =
-                exporter.collect(inferred.ast(), input.getName(), inferred.pyAst());
+                exporter.collect(inferred.ast(), input.getName(), inferred.pyAst(), input.toPath());
         String json = exporter.toJson(sites);
         return emit(json, out);
     }

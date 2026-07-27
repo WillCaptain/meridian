@@ -259,11 +259,13 @@ public abstract class PyConverter {
 
     @SuppressWarnings("unchecked")
     public static List<Map<String, Object>> listOf(Map<String, Object> node, String key) {
+        if (node == null) return Collections.emptyList();
         Object v = node.get(key);
         return (v instanceof List) ? (List<Map<String, Object>>) v : Collections.emptyList();
     }
 
     public static String strOf(Map<String, Object> node, String key) {
+        if (node == null) return null;
         Object v = node.get(key);
         return v == null ? null : v.toString();
     }

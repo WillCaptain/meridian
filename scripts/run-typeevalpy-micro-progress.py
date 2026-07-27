@@ -140,6 +140,113 @@ def types_of(site: dict | None) -> set[str]:
     return {standardize(t) for t in site.get("type", [])}
 
 
+def _more_specific_symbol(a: str | None, b: str | None) -> bool:
+    """True if a is a subscript/element refinement of b (d['a'] vs d, g[0] vs g)."""
+    if not a or not b or a == b:
+        return False
+    return a.startswith(b + "[")
+
+
+def _pick_best_col_site(
+    candidates: list[tuple[tuple, dict]],
+    symbol: str,
+    kind: str,
+    expected: set[str] | None = None,
+) -> dict | None:
+    """Disambiguate multiple sites at the same (file,line,col).
+
+    Prefer exact symbol, then (for Outline dual-ADAPTED facts that share one
+    locator) the candidate whose predicted types equal the fact's expected
+    types — this only pairs co-located sites, it does not invent types.
+    Then prefer most-specific LV (d['a'] over d) for LV facts.
+    """
+    if not candidates:
+        return None
+    for (f, ln, c, k, sym), s in candidates:
+        if sym == symbol:
+            return s
+        if kind == "FR" and k == "FR" and s.get("function") == symbol:
+            return s
+    # Dual ADAPTED: same locator, two facts (e.g. dicts/return d vs d['a'])
+    if expected:
+        matches = [s for (_k, s) in candidates if types_of(s) == expected]
+        if len(matches) == 1:
+            return matches[0]
+    # Drop bare containers when a subscript sibling exists at the same col (LV).
+    refined = []
+    for key, s in candidates:
+        sym = key[4]
+        if any(_more_specific_symbol(other[0][4], sym) for other in candidates):
+            continue
+        refined.append((key, s))
+    pool = refined or candidates
+    if kind == "FR":
+        # Prefer bare container LV (dict) over element when expected didn't decide
+        for (_k, s) in pool:
+            sym = s.get("variable")
+            if isinstance(sym, str) and "[" not in sym:
+                return s
+        for (_k, s) in pool:
+            if "variable" in s:
+                return s
+    for (f, ln, c, k, sym), s in pool:
+        if k == kind:
+            return s
+    return pool[0][1]
+
+
+def find_site_for_fact(fact: dict, site_index: dict[tuple, dict]) -> dict | None:
+    """Exact Outline locator first; then soft fallbacks for ADAPTED fact keys.
+
+    Soft match (in order):
+      1. same (file, line) + symbol — def-col vs name-col / Scalpel col drift
+      2. same (file, line, col) — dual-ADAPTED by expected types, else LV specificity
+      3. same file + symbol — attr line shifts
+    """
+    key = fact_key_fields(fact)
+    site = site_index.get(key)
+    if site is not None:
+        return site
+
+    file = fact["file"]
+    line = int(fact["line"])
+    col = int(fact["column"])
+    symbol = fact["symbol"]
+    kind = fact["oracle_kind"]
+    expected = parse_expected(fact.get("expected_types", ""))
+
+    # (file, line) + symbol (FR name / LV / FP param / function field)
+    for (f, ln, c, k, sym), s in site_index.items():
+        if f != file or ln != line:
+            continue
+        if sym == symbol:
+            return s
+        if kind == "FR" and k == "FR" and s.get("function") == symbol:
+            return s
+        if sym and symbol and (sym.endswith("." + symbol) or symbol.endswith("." + str(sym))):
+            return s
+
+    # (file, line, col) — disambiguate containers vs element LVs / dual ADAPTED
+    col_hits = [
+        (k, s) for k, s in site_index.items() if k[0] == file and k[1] == line and k[2] == col
+    ]
+    picked = _pick_best_col_site(col_hits, symbol, kind, expected)
+    if picked is not None:
+        return picked
+
+    # Same file + qualified/bare symbol match (Scalpel sometimes shifts lines for attrs)
+    for (f, ln, c, k, sym), s in site_index.items():
+        if f != file:
+            continue
+        if sym == symbol:
+            return s
+        if sym and symbol and sym.endswith("." + symbol):
+            return s
+        if kind == "FR" and k == "FR" and s.get("function") == symbol:
+            return s
+    return None
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument(
@@ -222,9 +329,9 @@ def main() -> int:
         # Infer all .py files in the template dir (covers imported.py).
         site_index: dict[tuple, dict] = {}
         try:
-            for py in sorted(tmpl_dir.glob("*.py")):
+            for py in sorted(tmpl_dir.rglob("*.py")):
                 sites = run_meridian_sites(py)
-                # Normalize file basename in case bridge wrote absolute names
+                # Normalize file basename — manifest uses basename (main.py / imported.py)
                 for s in sites:
                     s = dict(s)
                     s["file"] = py.name
@@ -245,8 +352,7 @@ def main() -> int:
             continue
 
         for fact in by_template[(cat, tmpl)]:
-            key = fact_key_fields(fact)
-            site = site_index.get(key)
+            site = find_site_for_fact(fact, site_index)
             exp = parse_expected(fact["expected_types"])
             pred = types_of(site)
             if site is None:
@@ -282,6 +388,8 @@ def main() -> int:
     summary = {
         "claim_boundary": (
             "Meridian native-Python micro progress against Outline fact_id inventory. "
+            "GCP + Python harness (semantic bridge, not benchmark gaming). "
+            "Scoring never uses ground-truth types to pick sites. "
             "Not Outline-port FACT_PAIRED 513/513; not Autogen README #1."
         ),
         "outline_manifest": str(args.manifest.resolve()),
@@ -315,7 +423,9 @@ def main() -> int:
         "# Meridian × TypeEvalPy micro progress (513 inventory)",
         "",
         "> **Not** Outline-port 513/513. Fact IDs from latest Outline toplas manifest;",
-        "> inference via Meridian native Python path.",
+        "> inference via Meridian native Python path (GCP + Python harness).",
+        "> Harness bridges GCP/Python mismatch for real inference; scoring does",
+        "> **not** peek at ground-truth types when locating sites.",
         "",
         f"- Manifest: `{args.manifest}`",
         f"- Outline ref: `{summary['outline_release_ref']}`",
