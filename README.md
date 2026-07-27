@@ -45,14 +45,17 @@ See [`REPRODUCE.md`](REPRODUCE.md). Product phases: [`MERIDIAN-PRODUCT-ROADMAP.m
 
 ## TypeEvalPy micro progress (native Meridian)
 
-Fact IDs come from the **latest Outline** toplas manifest (keep Outline updated):
+Fact IDs come from the **latest Outline** toplas manifest (keep Outline updated).
+Primary gate is **strict** exact-locator pairing; **compat** allows soft locators
+but never uses expected types. Legacy oracle-assisted 513/513 is archived only.
 
 ```bash
-python3 scripts/run-typeevalpy-micro-progress.py \
+python3 scripts/run-typeevalpy-micro-progress.py --mode both \
   --manifest ../outline/outline/src/test/java/org/twelve/outline/toplas/TYPEEVALPY-FACT-MANIFEST.csv
 ```
 
-Report: [`meridian-python/docs/typeevalpy-micro-progress.md`](meridian-python/docs/typeevalpy-micro-progress.md).  
+Report: [`meridian-python/docs/typeevalpy-micro-progress.md`](meridian-python/docs/typeevalpy-micro-progress.md) ·
+[strict vs compat](meridian-python/docs/typeevalpy-micro-progress-strict-vs-compat.md).  
 Docker drop-in scaffold: [`typeevalpy-adapter/`](typeevalpy-adapter/).
 
 ## Related work
