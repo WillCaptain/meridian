@@ -22,12 +22,24 @@ import java.util.Set;
  *   <li>Container literal element projection ({@code d['foo']}, {@code xs[0]})</li>
  *   <li>Returned-callable / binder data-flow ({@code x = f}; {@code return other})</li>
  *   <li>Receiver-sensitive method returns ({@code obj = C(); obj.m()})</li>
+ *   <li>{@code self.attr = self.method} delegation / {@code return self.attr()}</li>
+ *   <li>Import-alias resolution against registered / sibling module sources</li>
  * </ol>
  */
 public final class PythonSemanticRefiner {
 
     public PythonInferenceResult refine(AST gcpAst, Map<String, Object> pyAst,
                                         String fileName, Path sourcePath) {
+        return refine(gcpAst, pyAst, fileName, sourcePath, Map.of());
+    }
+
+    /**
+     * @param moduleSources optional {@code moduleName → source} (registry / siblings) for
+     *                      precise import-alias resolution; never scans unrelated files.
+     */
+    public PythonInferenceResult refine(AST gcpAst, Map<String, Object> pyAst,
+                                        String fileName, Path sourcePath,
+                                        Map<String, String> moduleSources) {
         Map<String, List<List<String>>> callSiteArgTypes = collectCallArgTypes(pyAst);
         Map<String, List<String>> containerElements = new LinkedHashMap<>();
         Map<String, List<String>> callReturns = new LinkedHashMap<>();
@@ -35,8 +47,14 @@ public final class PythonSemanticRefiner {
         Map<String, List<String>> functionReturns = new LinkedHashMap<>();
         Map<String, String> receiverTypes = new LinkedHashMap<>();
         Map<String, List<String>> callResults = new LinkedHashMap<>();
+        Map<String, String> importAliases = collectImportAliases(pyAst);
+        Map<String, Map<String, String>> attrBindings = collectAttrMethodBindings(pyAst);
+        Map<String, List<String>> classAttrs = collectClassAttrLiterals(pyAst);
 
+        indexImportedFunctionReturns(moduleSources, sourcePath, importAliases, functionReturns);
         indexFunctionReturns(pyAst, functionReturns, methodReturns);
+        applyImportAliasesToLocalBinders(importAliases, functionReturns, callReturns);
+        resolveSelfAttrDelegation(pyAst, attrBindings, methodReturns, functionReturns, classAttrs);
         projectContainerLiterals(pyAst, containerElements, callReturns, functionReturns);
         bindReturnedCallablesAndReceivers(
                 pyAst, functionReturns, methodReturns, callReturns, receiverTypes, callResults);
@@ -55,7 +73,9 @@ public final class PythonSemanticRefiner {
                 refinedParams,
                 methodReturns,
                 callResults,
-                receiverTypes);
+                receiverTypes,
+                importAliases,
+                attrBindings);
     }
 
     public PythonInferenceResult refine(AST gcpAst, Map<String, Object> pyAst, String fileName) {
@@ -510,6 +530,238 @@ public final class PythonSemanticRefiner {
             if (ret != null && !ret.isEmpty()) {
                 callResults.put(var, ret);
             }
+        }
+    }
+
+    // ── Rule 5+6: self.attr delegation + import aliases ───────────────────────
+
+    static Map<String, String> collectImportAliases(Map<String, Object> pyModule) {
+        Map<String, String> aliases = new LinkedHashMap<>();
+        if (pyModule == null) return aliases;
+        for (Map<String, Object> stmt : PyConverter.listOf(pyModule, "body")) {
+            String t = PyConverter.typeOf(stmt);
+            if ("Import".equals(t)) {
+                for (Map<String, Object> alias : PyConverter.listOf(stmt, "names")) {
+                    String name = PyConverter.strOf(alias, "name");
+                    String as = PyConverter.strOf(alias, "asname");
+                    if (name == null) continue;
+                    aliases.put(as != null ? as : name, name);
+                }
+            } else if ("ImportFrom".equals(t)) {
+                String mod = PyConverter.strOf(stmt, "module");
+                for (Map<String, Object> alias : PyConverter.listOf(stmt, "names")) {
+                    String name = PyConverter.strOf(alias, "name");
+                    String as = PyConverter.strOf(alias, "asname");
+                    if (name == null) continue;
+                    String local = as != null ? as : name;
+                    if (mod != null && !mod.isBlank()) {
+                        aliases.put(local, mod + "." + name);
+                    } else {
+                        aliases.put(local, name);
+                    }
+                }
+            }
+        }
+        return aliases;
+    }
+
+    static Map<String, Map<String, String>> collectAttrMethodBindings(Map<String, Object> pyModule) {
+        Map<String, Map<String, String>> bindings = new LinkedHashMap<>();
+        if (pyModule == null) return bindings;
+        for (Map<String, Object> stmt : PyConverter.listOf(pyModule, "body")) {
+            if (!"ClassDef".equals(PyConverter.typeOf(stmt))) continue;
+            String cls = PyConverter.strOf(stmt, "name");
+            Map<String, String> map = new LinkedHashMap<>();
+            for (Map<String, Object> body : PyConverter.listOf(stmt, "body")) {
+                if (!"FunctionDef".equals(PyConverter.typeOf(body))) continue;
+                for (Map<String, Object> b2 : PyConverter.listOf(body, "body")) {
+                    if (!"Assign".equals(PyConverter.typeOf(b2))) continue;
+                    Map<String, Object> value = PyConverter.mapOf(b2, "value");
+                    for (Map<String, Object> target : PyConverter.listOf(b2, "targets")) {
+                        if (!"Attribute".equals(PyConverter.typeOf(target))) continue;
+                        if (!"self".equals(PyConverter.strOf(PyConverter.mapOf(target, "value"), "id"))) {
+                            continue;
+                        }
+                        if (!"Attribute".equals(PyConverter.typeOf(value))) continue;
+                        if (!"self".equals(PyConverter.strOf(PyConverter.mapOf(value, "value"), "id"))) {
+                            continue;
+                        }
+                        String attr = PyConverter.strOf(target, "attr");
+                        String method = PyConverter.strOf(value, "attr");
+                        if (attr != null && method != null) map.put(attr, method);
+                    }
+                }
+            }
+            if (!map.isEmpty()) bindings.put(cls, map);
+        }
+        return bindings;
+    }
+
+    private static Map<String, List<String>> collectClassAttrLiterals(Map<String, Object> pyModule) {
+        Map<String, List<String>> out = new LinkedHashMap<>();
+        if (pyModule == null) return out;
+        for (Map<String, Object> stmt : PyConverter.listOf(pyModule, "body")) {
+            if (!"ClassDef".equals(PyConverter.typeOf(stmt))) continue;
+            String cls = PyConverter.strOf(stmt, "name");
+            for (Map<String, Object> body : PyConverter.listOf(stmt, "body")) {
+                if (!"Assign".equals(PyConverter.typeOf(body))) continue;
+                Map<String, Object> value = PyConverter.mapOf(body, "value");
+                List<String> types = literalType(value);
+                if (types.isEmpty() || types.equals(List.of("callable"))) continue;
+                for (Map<String, Object> target : PyConverter.listOf(body, "targets")) {
+                    if (!"Name".equals(PyConverter.typeOf(target))) continue;
+                    String attr = PyConverter.strOf(target, "id");
+                    if (attr != null) out.put(cls + "." + attr, types);
+                }
+            }
+        }
+        return out;
+    }
+
+    private static void resolveSelfAttrDelegation(
+            Map<String, Object> pyModule,
+            Map<String, Map<String, String>> bindings,
+            Map<String, List<String>> methodReturns,
+            Map<String, List<String>> functionReturns,
+            Map<String, List<String>> classAttrs) {
+        if (pyModule == null) return;
+        for (Map<String, Object> stmt : PyConverter.listOf(pyModule, "body")) {
+            if (!"ClassDef".equals(PyConverter.typeOf(stmt))) continue;
+            String cls = PyConverter.strOf(stmt, "name");
+            for (Map<String, Object> body : PyConverter.listOf(stmt, "body")) {
+                if (!"FunctionDef".equals(PyConverter.typeOf(body))) continue;
+                String method = PyConverter.strOf(body, "name");
+                String qname = cls + "." + method;
+                List<String> cur = methodReturns.get(qname);
+                if (cur != null && !cur.isEmpty() && !cur.equals(List.of("callable"))) {
+                    continue;
+                }
+                List<String> inferred =
+                        inferDelegatedReturn(body, cls, bindings, methodReturns, functionReturns, classAttrs);
+                if (inferred.isEmpty()) continue;
+                methodReturns.put(qname, inferred);
+                functionReturns.put(qname, inferred);
+                functionReturns.putIfAbsent(method, inferred);
+            }
+        }
+    }
+
+    private static List<String> inferDelegatedReturn(
+            Map<String, Object> func,
+            String cls,
+            Map<String, Map<String, String>> bindings,
+            Map<String, List<String>> methodReturns,
+            Map<String, List<String>> functionReturns,
+            Map<String, List<String>> classAttrs) {
+        for (Map<String, Object> stmt : PyConverter.listOf(func, "body")) {
+            if (!"Return".equals(PyConverter.typeOf(stmt))) continue;
+            Map<String, Object> value = PyConverter.mapOf(stmt, "value");
+            if ("Attribute".equals(PyConverter.typeOf(value))) {
+                if ("self".equals(PyConverter.strOf(PyConverter.mapOf(value, "value"), "id"))) {
+                    String attr = PyConverter.strOf(value, "attr");
+                    // return self.method — method reference
+                    if (methodReturns.containsKey(cls + "." + attr)
+                            || functionReturns.containsKey(cls + "." + attr)) {
+                        return List.of("callable");
+                    }
+                    List<String> attrType = classAttrs.get(cls + "." + attr);
+                    if (attrType != null && !attrType.isEmpty()) return attrType;
+                    return List.of("callable");
+                }
+            }
+            if ("Call".equals(PyConverter.typeOf(value))) {
+                Map<String, Object> callee = PyConverter.mapOf(value, "func");
+                if ("Attribute".equals(PyConverter.typeOf(callee))
+                        && "self".equals(PyConverter.strOf(PyConverter.mapOf(callee, "value"), "id"))) {
+                    String attr = PyConverter.strOf(callee, "attr");
+                    List<String> direct = methodReturns.get(cls + "." + attr);
+                    if (direct == null) direct = functionReturns.get(cls + "." + attr);
+                    if (direct != null && !direct.isEmpty() && !direct.equals(List.of("callable"))) {
+                        return direct;
+                    }
+                    for (Map.Entry<String, Map<String, String>> e : bindings.entrySet()) {
+                        String bound = e.getValue().get(attr);
+                        if (bound == null) continue;
+                        List<String> t = methodReturns.get(e.getKey() + "." + bound);
+                        if (t == null) t = functionReturns.get(e.getKey() + "." + bound);
+                        if (t == null) t = functionReturns.get(bound);
+                        if (t != null && !t.isEmpty() && !t.equals(List.of("callable"))) {
+                            return t;
+                        }
+                    }
+                }
+            }
+        }
+        return List.of();
+    }
+
+    private static void indexImportedFunctionReturns(
+            Map<String, String> moduleSources,
+            Path sourcePath,
+            Map<String, String> importAliases,
+            Map<String, List<String>> functionReturns) {
+        if (importAliases == null || importAliases.isEmpty()) return;
+        Set<String> neededMods = new LinkedHashSet<>();
+        for (String qual : importAliases.values()) {
+            int dot = qual.lastIndexOf('.');
+            if (dot > 0) neededMods.add(qual.substring(0, dot));
+            else neededMods.add(qual);
+        }
+        Map<String, String> sources = new LinkedHashMap<>();
+        if (moduleSources != null) sources.putAll(moduleSources);
+        if (sourcePath != null && sourcePath.getParent() != null) {
+            Path dir = sourcePath.getParent();
+            for (String mod : neededMods) {
+                if (sources.containsKey(mod)) continue;
+                if (mod.contains(".")) continue; // packages: skip for now unless registry
+                Path py = dir.resolve(mod + ".py");
+                if (java.nio.file.Files.isRegularFile(py)) {
+                    try {
+                        sources.put(mod, java.nio.file.Files.readString(py));
+                    } catch (Exception ignored) {
+                        // best-effort
+                    }
+                }
+            }
+        }
+        if (sources.isEmpty()) return;
+        PythonAstBridge bridge = new PythonAstBridge();
+        for (String mod : neededMods) {
+            String src = sources.get(mod);
+            if (src == null) continue;
+            try {
+                Map<String, Object> foreignAst = bridge.parse(src);
+                Map<String, List<String>> fr = new LinkedHashMap<>();
+                Map<String, List<String>> mr = new LinkedHashMap<>();
+                indexFunctionReturns(foreignAst, fr, mr);
+                for (Map.Entry<String, List<String>> e : fr.entrySet()) {
+                    functionReturns.putIfAbsent(mod + "." + e.getKey(), e.getValue());
+                    functionReturns.putIfAbsent(e.getKey(), e.getValue());
+                }
+                for (Map.Entry<String, List<String>> e : mr.entrySet()) {
+                    functionReturns.putIfAbsent(mod + "." + e.getKey(), e.getValue());
+                }
+            } catch (Exception ignored) {
+                // best-effort import refine only
+            }
+        }
+    }
+
+    private static void applyImportAliasesToLocalBinders(
+            Map<String, String> importAliases,
+            Map<String, List<String>> functionReturns,
+            Map<String, List<String>> callReturns) {
+        for (Map.Entry<String, String> e : importAliases.entrySet()) {
+            String local = e.getKey();
+            String qual = e.getValue();
+            List<String> ret = functionReturns.get(qual);
+            if (ret == null) {
+                int dot = qual.lastIndexOf('.');
+                if (dot > 0) ret = functionReturns.get(qual.substring(dot + 1));
+            }
+            if (ret == null || ret.isEmpty()) continue;
+            functionReturns.putIfAbsent(local, ret);
+            callReturns.putIfAbsent(local, ret);
         }
     }
 

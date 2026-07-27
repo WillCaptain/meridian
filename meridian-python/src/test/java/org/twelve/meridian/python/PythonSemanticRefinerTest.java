@@ -123,4 +123,42 @@ class PythonSemanticRefinerTest {
                 .orElseThrow();
         assertTrue(((List<?>) fp.get("type")).contains("int"), () -> String.valueOf(fp));
     }
+
+    @Test
+    void selfAttrDelegationResolvesViaBinding() {
+        PythonInferenceResult r = new PythonInferencer().inferDetailed("""
+                class A:
+                    def helper(self):
+                        return "hi"
+
+                    def __init__(self):
+                        self.cb = self.helper
+
+                    def run(self):
+                        return self.cb()
+                """);
+        assertEquals("helper", r.attrMethodBindings().get("A").get("cb"));
+        assertEquals(List.of("str"), r.methodReturns().get("A.helper"));
+        assertEquals(List.of("str"), r.methodReturns().get("A.run"),
+                () -> String.valueOf(r.methodReturns()));
+    }
+
+    @Test
+    void importAliasUsesRegisteredModuleNotFirstMatch() {
+        PythonInferencer inf = new PythonInferencer();
+        inf.registerModule("mod_a", "def f():\n    return 1\n");
+        inf.registerModule("mod_b", "def f():\n    return 'hi'\n");
+        PythonInferenceResult r = inf.inferDetailed("""
+                from mod_a import f as fa
+                from mod_b import f as fb
+                x = fa()
+                y = fb()
+                """);
+        assertEquals("mod_a.f", r.importAliases().get("fa"));
+        assertEquals("mod_b.f", r.importAliases().get("fb"));
+        assertEquals(List.of("int"), r.callResults().get("x"),
+                () -> String.valueOf(r.callResults()) + " returns=" + r.callReturns());
+        assertEquals(List.of("str"), r.callResults().get("y"),
+                () -> String.valueOf(r.callResults()));
+    }
 }

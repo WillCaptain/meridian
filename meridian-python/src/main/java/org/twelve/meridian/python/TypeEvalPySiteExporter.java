@@ -104,6 +104,7 @@ public class TypeEvalPySiteExporter {
                 enrichFromPythonAst(sites, pyAst, fileName, sourcePath);
                 applySharedContainerElements(sites, fileName);
                 applySharedCallResults(sites, fileName);
+                applySharedMethodReturns(sites, fileName);
             }
             return sites;
         } finally {
@@ -361,37 +362,6 @@ public class TypeEvalPySiteExporter {
         return false;
     }
 
-    private Map<String, Map<String, String>> collectAttrMethodBindings(Map<String, Object> pyModule) {
-        Map<String, Map<String, String>> bindings = new HashMap<>();
-        for (Map<String, Object> stmt : PyConverter.listOf(pyModule, "body")) {
-            if (!"ClassDef".equals(PyConverter.typeOf(stmt))) continue;
-            String cls = PyConverter.strOf(stmt, "name");
-            Map<String, String> map = new HashMap<>();
-            for (Map<String, Object> body : PyConverter.listOf(stmt, "body")) {
-                if (!"FunctionDef".equals(PyConverter.typeOf(body))) continue;
-                for (Map<String, Object> b2 : PyConverter.listOf(body, "body")) {
-                    if (!"Assign".equals(PyConverter.typeOf(b2))) continue;
-                    Map<String, Object> value = PyConverter.mapOf(b2, "value");
-                    for (Map<String, Object> target : PyConverter.listOf(b2, "targets")) {
-                        if (!"Attribute".equals(PyConverter.typeOf(target))) continue;
-                        if (!"self".equals(PyConverter.strOf(PyConverter.mapOf(target, "value"), "id"))) {
-                            continue;
-                        }
-                        if (!"Attribute".equals(PyConverter.typeOf(value))) continue;
-                        if (!"self".equals(PyConverter.strOf(PyConverter.mapOf(value, "value"), "id"))) {
-                            continue;
-                        }
-                        String attr = PyConverter.strOf(target, "attr");
-                        String method = PyConverter.strOf(value, "attr");
-                        if (attr != null && method != null) map.put(attr, method);
-                    }
-                }
-            }
-            if (!map.isEmpty()) bindings.put(cls, map);
-        }
-        return bindings;
-    }
-
     /**
      * Ensure every FunctionDef has TypeEvalPy FR/FP sites, including methods that
      * GCP failed to type, dual def/name columns, and AugAssign body FP copies.
@@ -465,6 +435,33 @@ public class TypeEvalPySiteExporter {
             }
             if (!updated) {
                 addLv(sites, fileName, 1, 0, var, types);
+            }
+        }
+    }
+
+    /** Apply shared method returns onto weak FR sites (self.attr delegation). */
+    private void applySharedMethodReturns(List<Map<String, Object>> sites, String fileName) {
+        if (sharedInference == null) return;
+        for (Map.Entry<String, List<String>> e : sharedInference.methodReturns().entrySet()) {
+            String qname = e.getKey();
+            List<String> types = e.getValue();
+            if (qname == null || types == null || types.isEmpty()) continue;
+            boolean touched = false;
+            for (Map<String, Object> s : sites) {
+                if (s.containsKey("parameter") || s.containsKey("variable")) continue;
+                if (!qname.equals(s.get("function"))) continue;
+                Object cur = s.get("type");
+                if (cur instanceof List<?> list && !list.isEmpty()
+                        && !list.equals(List.of("callable"))
+                        && !list.equals(List.of("Nonetype"))) {
+                    touched = true;
+                    continue;
+                }
+                s.put("type", types);
+                touched = true;
+            }
+            if (!touched) {
+                // No FR site yet — leave to ensureFunctionSites; don't invent locs.
             }
         }
     }
@@ -3812,34 +3809,17 @@ public class TypeEvalPySiteExporter {
     }
 
     private Map<String, String> collectImportAliases(Map<String, Object> pyModule) {
-        Map<String, String> aliases = new HashMap<>();
-        for (Map<String, Object> stmt : PyConverter.listOf(pyModule, "body")) {
-            String t = PyConverter.typeOf(stmt);
-            if ("Import".equals(t)) {
-                for (Map<String, Object> alias : PyConverter.listOf(stmt, "names")) {
-                    String name = PyConverter.strOf(alias, "name");
-                    String as = PyConverter.strOf(alias, "asname");
-                    if (name == null) continue;
-                    aliases.put(as != null ? as : name, name);
-                }
-            } else if ("ImportFrom".equals(t)) {
-                String mod = PyConverter.strOf(stmt, "module");
-                for (Map<String, Object> alias : PyConverter.listOf(stmt, "names")) {
-                    String name = PyConverter.strOf(alias, "name");
-                    String as = PyConverter.strOf(alias, "asname");
-                    if (name == null) continue;
-                    String local = as != null ? as : name;
-                    if (mod != null && !mod.isBlank()) {
-                        aliases.put(local, mod + "." + name);
-                        // also allow attribute access via module alias from `from nest import imported`
-                        aliases.putIfAbsent(local, mod + "." + name);
-                    } else {
-                        aliases.put(local, name);
-                    }
-                }
-            }
+        if (sharedInference != null && !sharedInference.importAliases().isEmpty()) {
+            return new HashMap<>(sharedInference.importAliases());
         }
-        return aliases;
+        return PythonSemanticRefiner.collectImportAliases(pyModule);
+    }
+
+    private Map<String, Map<String, String>> collectAttrMethodBindings(Map<String, Object> pyModule) {
+        if (sharedInference != null && !sharedInference.attrMethodBindings().isEmpty()) {
+            return new HashMap<>(sharedInference.attrMethodBindings());
+        }
+        return PythonSemanticRefiner.collectAttrMethodBindings(pyModule);
     }
 
     private Map<String, Map<String, List<String>>> loadSiblingSummaries(

@@ -46,6 +46,12 @@ public final class PythonInferenceResult {
     /** variable → nominal class from {@code x = Class(...)}. */
     private final Map<String, String> receiverTypes;
 
+    /** local import name → {@code module.symbol} (or module). */
+    private final Map<String, String> importAliases;
+
+    /** class → ({@code self.attr} → {@code self.method}) bindings. */
+    private final Map<String, Map<String, String>> attrMethodBindings;
+
     public PythonInferenceResult(
             AST gcpAst,
             Map<String, Object> pyAst,
@@ -57,7 +63,9 @@ public final class PythonInferenceResult {
             Map<String, Map<String, List<String>>> refinedParams,
             Map<String, List<String>> methodReturns,
             Map<String, List<String>> callResults,
-            Map<String, String> receiverTypes) {
+            Map<String, String> receiverTypes,
+            Map<String, String> importAliases,
+            Map<String, Map<String, String>> attrMethodBindings) {
         this.gcpAst = gcpAst;
         this.pyAst = pyAst;
         this.fileName = fileName;
@@ -69,6 +77,8 @@ public final class PythonInferenceResult {
         this.methodReturns = Map.copyOf(methodReturns);
         this.callResults = Map.copyOf(callResults);
         this.receiverTypes = Map.copyOf(receiverTypes);
+        this.importAliases = Map.copyOf(importAliases);
+        this.attrMethodBindings = copyStringMap(attrMethodBindings);
     }
 
     public AST gcpAst() {
@@ -115,6 +125,14 @@ public final class PythonInferenceResult {
         return receiverTypes;
     }
 
+    public Map<String, String> importAliases() {
+        return importAliases;
+    }
+
+    public Map<String, Map<String, String>> attrMethodBindings() {
+        return attrMethodBindings;
+    }
+
     /**
      * Annotation-writer keys: {@code func#param} → first Meridian type token.
      */
@@ -153,6 +171,15 @@ public final class PythonInferenceResult {
                 inner.put(p.getKey(), List.copyOf(p.getValue()));
             }
             out.put(e.getKey(), Collections.unmodifiableMap(inner));
+        }
+        return Collections.unmodifiableMap(out);
+    }
+
+    private static Map<String, Map<String, String>> copyStringMap(
+            Map<String, Map<String, String>> in) {
+        Map<String, Map<String, String>> out = new LinkedHashMap<>();
+        for (Map.Entry<String, Map<String, String>> e : in.entrySet()) {
+            out.put(e.getKey(), Map.copyOf(e.getValue()));
         }
         return Collections.unmodifiableMap(out);
     }

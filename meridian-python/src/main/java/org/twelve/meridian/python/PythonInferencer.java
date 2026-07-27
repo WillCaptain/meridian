@@ -132,7 +132,8 @@ public class PythonInferencer {
         AST ast = converter.convert(pyAst);
         asf.infer();
         PythonInferenceResult inference =
-                new PythonSemanticRefiner().refine(ast, pyAst, pythonFile.getName(), pythonFile.toPath());
+                new PythonSemanticRefiner().refine(
+                        ast, pyAst, pythonFile.getName(), pythonFile.toPath(), moduleRegistry);
         return new InferResult(ast, pyAst, inference);
     }
 
@@ -145,13 +146,13 @@ public class PythonInferencer {
         Map<String, Object> pyAst = bridge.parse(pythonSource);
         AST ast = converter.convert(pyAst);
         asf.infer();
-        return new PythonSemanticRefiner().refine(ast, pyAst, "<string>", null);
+        return new PythonSemanticRefiner().refine(ast, pyAst, "<string>", null, moduleRegistry);
     }
 
     /** Result of {@link #inferFileDetailed(File)}. */
     public record InferResult(AST ast, Map<String, Object> pyAst, PythonInferenceResult inference) {
         public InferResult(AST ast, Map<String, Object> pyAst) {
-            this(ast, pyAst, new PythonSemanticRefiner().refine(ast, pyAst, "<unknown>", null));
+            this(ast, pyAst, new PythonSemanticRefiner().refine(ast, pyAst, "<unknown>", null, Map.of()));
         }
     }
 
