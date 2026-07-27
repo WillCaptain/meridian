@@ -2,32 +2,32 @@
   "summary": {
     "claim_boundary": "Meridian native-Python micro progress against Outline fact_id inventory. GCP + Python harness. Primary gate is strict exact-locator pairing; compat allows locator soft-match but never uses ground-truth types to pick sites. legacy mode (expected-type disambiguation) is historical only and is not SOTA. Not Outline-port FACT_PAIRED 513/513; not Autogen README #1.",
     "total_facts_scored": 513,
-    "exact": 509,
-    "exact_rate": 0.9922,
-    "located": 511,
+    "exact": 513,
+    "exact_rate": 1.0,
+    "located": 513,
     "missing_source_templates": 0,
     "template_errors": 0,
-    "elapsed_sec": 163.6,
+    "elapsed_sec": 164.5,
     "by_category": {
       "assignments": {
-        "exact": 81,
+        "exact": 82,
         "total": 82,
-        "rate": 0.9878
+        "rate": 1.0
       },
       "classes": {
-        "exact": 124,
+        "exact": 125,
         "total": 125,
-        "rate": 0.992
+        "rate": 1.0
       },
       "dicts": {
-        "exact": 107,
+        "exact": 108,
         "total": 108,
-        "rate": 0.9907
+        "rate": 1.0
       },
       "direct_calls": {
-        "exact": 23,
+        "exact": 24,
         "total": 24,
-        "rate": 0.9583
+        "rate": 1.0
       },
       "functions": {
         "exact": 37,
@@ -51,9 +51,7 @@
       }
     },
     "by_status": {
-      "EXACT": 509,
-      "MISS_LOCATION": 2,
-      "MISS_TYPE": 2
+      "EXACT": 513
     },
     "scoring_mode": "strict",
     "outline_manifest": "/Users/imac/Documents/code/github/outline/outline/src/test/java/org/twelve/outline/toplas/TYPEEVALPY-FACT-MANIFEST.csv",
@@ -62,23 +60,20 @@
     "uses_expected_types_for_pairing": false,
     "modes": {
       "strict": {
-        "exact": 509,
-        "exact_rate": 0.9922,
-        "located": 511,
+        "exact": 513,
+        "exact_rate": 1.0,
+        "located": 513,
         "by_status": {
-          "EXACT": 509,
-          "MISS_LOCATION": 2,
-          "MISS_TYPE": 2
+          "EXACT": 513
         },
         "uses_expected_types_for_pairing": false
       },
       "compat": {
-        "exact": 510,
-        "exact_rate": 0.9942,
+        "exact": 513,
+        "exact_rate": 1.0,
         "located": 513,
         "by_status": {
-          "EXACT": 510,
-          "MISS_TYPE": 3
+          "EXACT": 513
         },
         "uses_expected_types_for_pairing": false
       }
@@ -88,32 +83,32 @@
     "strict": {
       "claim_boundary": "Meridian native-Python micro progress against Outline fact_id inventory. GCP + Python harness. Primary gate is strict exact-locator pairing; compat allows locator soft-match but never uses ground-truth types to pick sites. legacy mode (expected-type disambiguation) is historical only and is not SOTA. Not Outline-port FACT_PAIRED 513/513; not Autogen README #1.",
       "total_facts_scored": 513,
-      "exact": 509,
-      "exact_rate": 0.9922,
-      "located": 511,
+      "exact": 513,
+      "exact_rate": 1.0,
+      "located": 513,
       "missing_source_templates": 0,
       "template_errors": 0,
-      "elapsed_sec": 163.6,
+      "elapsed_sec": 164.5,
       "by_category": {
         "assignments": {
-          "exact": 81,
+          "exact": 82,
           "total": 82,
-          "rate": 0.9878
+          "rate": 1.0
         },
         "classes": {
-          "exact": 124,
+          "exact": 125,
           "total": 125,
-          "rate": 0.992
+          "rate": 1.0
         },
         "dicts": {
-          "exact": 107,
+          "exact": 108,
           "total": 108,
-          "rate": 0.9907
+          "rate": 1.0
         },
         "direct_calls": {
-          "exact": 23,
+          "exact": 24,
           "total": 24,
-          "rate": 0.9583
+          "rate": 1.0
         },
         "functions": {
           "exact": 37,
@@ -137,9 +132,7 @@
         }
       },
       "by_status": {
-        "EXACT": 509,
-        "MISS_LOCATION": 2,
-        "MISS_TYPE": 2
+        "EXACT": 513
       },
       "scoring_mode": "strict",
       "outline_manifest": "/Users/imac/Documents/code/github/outline/outline/src/test/java/org/twelve/outline/toplas/TYPEEVALPY-FACT-MANIFEST.csv",
@@ -150,17 +143,17 @@
     "compat": {
       "claim_boundary": "Meridian native-Python micro progress against Outline fact_id inventory. GCP + Python harness. Primary gate is strict exact-locator pairing; compat allows locator soft-match but never uses ground-truth types to pick sites. legacy mode (expected-type disambiguation) is historical only and is not SOTA. Not Outline-port FACT_PAIRED 513/513; not Autogen README #1.",
       "total_facts_scored": 513,
-      "exact": 510,
-      "exact_rate": 0.9942,
+      "exact": 513,
+      "exact_rate": 1.0,
       "located": 513,
       "missing_source_templates": 0,
       "template_errors": 0,
-      "elapsed_sec": 163.6,
+      "elapsed_sec": 164.5,
       "by_category": {
         "assignments": {
-          "exact": 81,
+          "exact": 82,
           "total": 82,
-          "rate": 0.9878
+          "rate": 1.0
         },
         "classes": {
           "exact": 125,
@@ -168,14 +161,14 @@
           "rate": 1.0
         },
         "dicts": {
-          "exact": 107,
+          "exact": 108,
           "total": 108,
-          "rate": 0.9907
+          "rate": 1.0
         },
         "direct_calls": {
-          "exact": 23,
+          "exact": 24,
           "total": 24,
-          "rate": 0.9583
+          "rate": 1.0
         },
         "functions": {
           "exact": 37,
@@ -199,8 +192,7 @@
         }
       },
       "by_status": {
-        "EXACT": 510,
-        "MISS_TYPE": 3
+        "EXACT": 513
       },
       "scoring_mode": "compat",
       "outline_manifest": "/Users/imac/Documents/code/github/outline/outline/src/test/java/org/twelve/outline/toplas/TYPEEVALPY-FACT-MANIFEST.csv",
@@ -837,13 +829,15 @@
       },
       {
         "fact_id": "assignments/recursive_tuple/024/main.py:40:1/LV/m['a']",
-        "status": "MISS_LOCATION",
+        "status": "EXACT",
         "category": "assignments",
         "template": "recursive_tuple",
         "expected": [
           "str"
         ],
-        "predicted": [],
+        "predicted": [
+          "str"
+        ],
         "mapping_outline": "ADAPTED"
       },
       {
@@ -1901,13 +1895,15 @@
       },
       {
         "fact_id": "classes/imported_nested_attr_access/002/imported.py:6:1/LV/b",
-        "status": "MISS_LOCATION",
+        "status": "EXACT",
         "category": "classes",
         "template": "imported_nested_attr_access",
         "expected": [
           "str"
         ],
-        "predicted": [],
+        "predicted": [
+          "str"
+        ],
         "mapping_outline": "ADAPTED"
       },
       {
@@ -3812,14 +3808,13 @@
       },
       {
         "fact_id": "dicts/param_key/008/main.py:18:1/LV/e",
-        "status": "MISS_TYPE",
+        "status": "EXACT",
         "category": "dicts",
         "template": "param_key",
         "expected": [
           "str"
         ],
         "predicted": [
-          "int",
           "str"
         ],
         "mapping_outline": "ADAPTED"
@@ -4372,14 +4367,14 @@
       },
       {
         "fact_id": "direct_calls/imported_return_call/001/main.py:6:1/LV/a",
-        "status": "MISS_TYPE",
+        "status": "EXACT",
         "category": "direct_calls",
         "template": "imported_return_call",
         "expected": [
           "str"
         ],
         "predicted": [
-          "callable"
+          "str"
         ],
         "mapping_outline": "ADAPTED"
       },
@@ -7525,14 +7520,14 @@
       },
       {
         "fact_id": "assignments/recursive_tuple/024/main.py:40:1/LV/m['a']",
-        "status": "MISS_TYPE",
+        "status": "EXACT",
         "category": "assignments",
         "template": "recursive_tuple",
         "expected": [
           "str"
         ],
         "predicted": [
-          "dict"
+          "str"
         ],
         "mapping_outline": "ADAPTED"
       },
@@ -10504,14 +10499,13 @@
       },
       {
         "fact_id": "dicts/param_key/008/main.py:18:1/LV/e",
-        "status": "MISS_TYPE",
+        "status": "EXACT",
         "category": "dicts",
         "template": "param_key",
         "expected": [
           "str"
         ],
         "predicted": [
-          "int",
           "str"
         ],
         "mapping_outline": "ADAPTED"
@@ -11064,14 +11058,14 @@
       },
       {
         "fact_id": "direct_calls/imported_return_call/001/main.py:6:1/LV/a",
-        "status": "MISS_TYPE",
+        "status": "EXACT",
         "category": "direct_calls",
         "template": "imported_return_call",
         "expected": [
           "str"
         ],
         "predicted": [
-          "callable"
+          "str"
         ],
         "mapping_outline": "ADAPTED"
       },
@@ -14218,13 +14212,15 @@
     },
     {
       "fact_id": "assignments/recursive_tuple/024/main.py:40:1/LV/m['a']",
-      "status": "MISS_LOCATION",
+      "status": "EXACT",
       "category": "assignments",
       "template": "recursive_tuple",
       "expected": [
         "str"
       ],
-      "predicted": [],
+      "predicted": [
+        "str"
+      ],
       "mapping_outline": "ADAPTED"
     },
     {
@@ -15282,13 +15278,15 @@
     },
     {
       "fact_id": "classes/imported_nested_attr_access/002/imported.py:6:1/LV/b",
-      "status": "MISS_LOCATION",
+      "status": "EXACT",
       "category": "classes",
       "template": "imported_nested_attr_access",
       "expected": [
         "str"
       ],
-      "predicted": [],
+      "predicted": [
+        "str"
+      ],
       "mapping_outline": "ADAPTED"
     },
     {
@@ -17193,14 +17191,13 @@
     },
     {
       "fact_id": "dicts/param_key/008/main.py:18:1/LV/e",
-      "status": "MISS_TYPE",
+      "status": "EXACT",
       "category": "dicts",
       "template": "param_key",
       "expected": [
         "str"
       ],
       "predicted": [
-        "int",
         "str"
       ],
       "mapping_outline": "ADAPTED"
@@ -17753,14 +17750,14 @@
     },
     {
       "fact_id": "direct_calls/imported_return_call/001/main.py:6:1/LV/a",
-      "status": "MISS_TYPE",
+      "status": "EXACT",
       "category": "direct_calls",
       "template": "imported_return_call",
       "expected": [
         "str"
       ],
       "predicted": [
-        "callable"
+        "str"
       ],
       "mapping_outline": "ADAPTED"
     },

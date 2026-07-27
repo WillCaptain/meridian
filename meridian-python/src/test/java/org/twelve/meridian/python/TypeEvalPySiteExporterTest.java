@@ -130,6 +130,107 @@ class TypeEvalPySiteExporterTest {
     }
 
     @Test
+    void importedFactoryDoubleCallPeelsToConcrete() throws Exception {
+        Path dir = tmp.resolve("imp");
+        Files.createDirectories(dir);
+        Files.writeString(dir.resolve("to_import.py"), """
+                def return_func():
+                    return "Hello from return_func"
+
+                def func():
+                    return return_func
+                """);
+        Path py = dir.resolve("main.py");
+        Files.writeString(py, """
+                from to_import import func
+
+                a = func()()
+                """);
+
+        PythonInferencer.InferResult r = new PythonInferencer().inferFileDetailed(py.toFile());
+        List<Map<String, Object>> sites =
+                new TypeEvalPySiteExporter().collect(r.inference());
+
+        assertEquals(List.of("str"), sortedTypes(find(sites, s -> "a".equals(s.get("variable")))),
+                () -> String.valueOf(sites));
+    }
+
+    @Test
+    void zeroArgDefaultDictKeySpecializesCallLv() throws Exception {
+        Path py = tmp.resolve("main.py");
+        Files.writeString(py, """
+                def func1(key="a"):
+                    return d[key]()
+
+                def func2():
+                    return "Hello from func2"
+
+                def func3():
+                    return 42
+
+                d = {"a": func2, "b": func3}
+
+                e = func1()
+                f = func1("b")
+                """);
+
+        PythonInferencer.InferResult r = new PythonInferencer().inferFileDetailed(py.toFile());
+        List<Map<String, Object>> sites =
+                new TypeEvalPySiteExporter().collect(r.inference());
+
+        assertEquals(List.of("str"), sortedTypes(find(sites, s -> "e".equals(s.get("variable")))),
+                () -> String.valueOf(sites));
+        assertEquals(List.of("int"), sortedTypes(find(sites, s -> "f".equals(s.get("variable")))),
+                () -> String.valueOf(sites));
+    }
+
+    @Test
+    void dictSlotFromFactoryCallPeelsOnCall() throws Exception {
+        Path py = tmp.resolve("main.py");
+        Files.writeString(py, """
+                def func2():
+                    return "Hello from func2"
+
+                def func1():
+                    return func2
+
+                d = {"a": func1()}
+                e = d["a"]()
+                """);
+
+        PythonInferencer.InferResult r = new PythonInferencer().inferFileDetailed(py.toFile());
+        List<Map<String, Object>> sites =
+                new TypeEvalPySiteExporter().collect(r.inference());
+
+        assertEquals(List.of("callable"),
+                sortedTypes(find(sites, s -> "d['a']".equals(s.get("variable")))),
+                () -> String.valueOf(sites));
+        assertEquals(List.of("str"), sortedTypes(find(sites, s -> "e".equals(s.get("variable")))),
+                () -> String.valueOf(sites));
+    }
+
+    @Test
+    void returnedDictLiteralProjectsThroughBinder() throws Exception {
+        Path py = tmp.resolve("main.py");
+        Files.writeString(py, """
+                def func5():
+                    return {"a": "Hello"}
+
+                f = func5
+                m = f()
+                """);
+
+        PythonInferencer.InferResult r = new PythonInferencer().inferFileDetailed(py.toFile());
+        List<Map<String, Object>> sites =
+                new TypeEvalPySiteExporter().collect(r.inference());
+
+        assertEquals(List.of("dict"), sortedTypes(find(sites, s -> "m".equals(s.get("variable")))),
+                () -> String.valueOf(sites));
+        assertEquals(List.of("str"), sortedTypes(find(sites, s -> "m['a']".equals(s.get("variable")))),
+                () -> String.valueOf(sites));
+    }
+
+    @Test
     void nestedIntOnlyCallKeepsIntOverNumberFloat() throws Exception {
         Path py = tmp.resolve("main.py");
         Files.writeString(py, """

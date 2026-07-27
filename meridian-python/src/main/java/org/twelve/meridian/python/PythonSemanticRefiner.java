@@ -57,6 +57,7 @@ public final class PythonSemanticRefiner {
         applyImportAliasesToLocalBinders(importAliases, functionReturns, callReturns);
         resolveSelfAttrDelegation(pyAst, attrBindings, methodReturns, functionReturns, classAttrs);
         projectContainerLiterals(pyAst, containerElements, callReturns, functionReturns);
+        projectReturnContainerLiterals(pyAst, callReturns, functionReturns);
         bindReturnedCallablesAndReceivers(
                 pyAst, functionReturns, methodReturns, callReturns, receiverTypes, callResults);
 
@@ -416,11 +417,85 @@ public final class PythonSemanticRefiner {
                 List<String> fr = id == null ? null : functionReturns.get(id);
                 if (fr != null) callReturns.put(path, fr);
                 if (et.isEmpty()) et = List.of("callable");
+            } else if ("Call".equals(PyConverter.typeOf(val))) {
+                // d = {"a": func1()} — slot holds the call result; prefer peeled return
+                // (func1()→str) over literalType's bare callable placeholder.
+                Map<String, Object> callee = PyConverter.mapOf(val, "func");
+                if ("Name".equals(PyConverter.typeOf(callee))) {
+                    String id = PyConverter.strOf(callee, "id");
+                    List<String> peeled = id == null ? null : functionReturns.get(id + "()");
+                    if (peeled == null && id != null) peeled = functionReturns.get(id);
+                    if (peeled != null && !peeled.isEmpty()) {
+                        callReturns.put(path, peeled);
+                        if (et.isEmpty() || et.equals(List.of("callable"))) {
+                            et = List.of("callable");
+                        }
+                    }
+                }
             }
             if (et.isEmpty()) continue;
             elements.put(path, et);
+            // Concrete literal slots only (str/int/…) — never seed callReturns with the
+            // Call/Name placeholder "callable", which would block deeper peel types.
+            if (!et.equals(List.of("callable"))) {
+                callReturns.putIfAbsent(path, et);
+            }
             if ("Dict".equals(PyConverter.typeOf(val))) {
                 projectDictElements(path, val, elements, callReturns, functionReturns);
+            }
+        }
+    }
+
+    /**
+     * Project {@code return {literal…}} / {@code return […]} element slots onto the
+     * function name ({@code func5['a']}) so binders and {@code m = f()} can project
+     * without inventing keys that never appear in the AST.
+     */
+    private static void projectReturnContainerLiterals(
+            Map<String, Object> pyModule,
+            Map<String, List<String>> callReturns,
+            Map<String, List<String>> functionReturns) {
+        if (pyModule == null) return;
+        for (Map<String, Object> stmt : PyConverter.listOf(pyModule, "body")) {
+            projectReturnContainersInStmt(stmt, null, callReturns, functionReturns);
+        }
+    }
+
+    private static void projectReturnContainersInStmt(
+            Map<String, Object> stmt,
+            String className,
+            Map<String, List<String>> callReturns,
+            Map<String, List<String>> functionReturns) {
+        String t = PyConverter.typeOf(stmt);
+        if ("ClassDef".equals(t)) {
+            String name = PyConverter.strOf(stmt, "name");
+            for (Map<String, Object> bodyStmt : PyConverter.listOf(stmt, "body")) {
+                projectReturnContainersInStmt(bodyStmt, name, callReturns, functionReturns);
+            }
+            return;
+        }
+        if (!"FunctionDef".equals(t) && !"AsyncFunctionDef".equals(t)) return;
+        String bare = PyConverter.strOf(stmt, "name");
+        if (bare == null) return;
+        String qname = className != null ? className + "." + bare : bare;
+        for (Map<String, Object> bodyStmt : PyConverter.listOf(stmt, "body")) {
+            if (!"Return".equals(PyConverter.typeOf(bodyStmt))) continue;
+            Map<String, Object> value = PyConverter.mapOf(bodyStmt, "value");
+            if ("Dict".equals(PyConverter.typeOf(value))) {
+                projectDictElements(bare, value, new LinkedHashMap<>(), callReturns, functionReturns);
+                if (!qname.equals(bare)) {
+                    projectDictElements(qname, value, new LinkedHashMap<>(), callReturns, functionReturns);
+                }
+            } else if ("List".equals(PyConverter.typeOf(value))) {
+                List<Map<String, Object>> elts = PyConverter.listOf(value, "elts");
+                for (int i = 0; i < elts.size(); i++) {
+                    List<String> et = literalType(elts.get(i));
+                    if (et.isEmpty() || et.equals(List.of("Any"))) continue;
+                    callReturns.putIfAbsent(bare + "[" + i + "]", et);
+                    if (!qname.equals(bare)) {
+                        callReturns.putIfAbsent(qname + "[" + i + "]", et);
+                    }
+                }
             }
         }
     }
@@ -587,9 +662,44 @@ public final class PythonSemanticRefiner {
             if (viaReturned != null) {
                 callReturns.put(var + "()", viaReturned);
             }
+            // Binder inherits container slots: f = func5 after return {"a": …} → f['a'].
+            copyPrefixedSlots(callReturns, id, var);
             return;
         }
         if (!"Call".equals(t)) return;
+        // Peel nested calls: a = func()() → functionReturns["func()"] (imported factory).
+        int depth = 0;
+        Map<String, Object> peel = value;
+        while ("Call".equals(PyConverter.typeOf(peel))) {
+            depth++;
+            peel = PyConverter.mapOf(peel, "func");
+        }
+        if (depth >= 2 && "Name".equals(PyConverter.typeOf(peel))) {
+            String callee = PyConverter.strOf(peel, "id");
+            if (callee != null) {
+                StringBuilder key = new StringBuilder(callee);
+                for (int i = 0; i < depth - 1; i++) {
+                    key.append("()");
+                }
+                List<String> peeled = functionReturns.get(key.toString());
+                if (peeled == null) {
+                    peeled = callReturns.get(key.toString());
+                }
+                if (peeled == null) {
+                    String ks = key.toString();
+                    for (Map.Entry<String, List<String>> e : functionReturns.entrySet()) {
+                        if (e.getKey().equals(ks) || e.getKey().endsWith("." + ks)) {
+                            peeled = e.getValue();
+                            break;
+                        }
+                    }
+                }
+                if (peeled != null && !peeled.isEmpty()) {
+                    callResults.put(var, peeled);
+                    return;
+                }
+            }
+        }
         Map<String, Object> func = PyConverter.mapOf(value, "func");
         if ("Name".equals(PyConverter.typeOf(func))) {
             String callee = PyConverter.strOf(func, "id");
@@ -965,14 +1075,37 @@ public final class PythonSemanticRefiner {
         for (Map.Entry<String, String> e : importAliases.entrySet()) {
             String local = e.getKey();
             String qual = e.getValue();
-            List<String> ret = functionReturns.get(qual);
-            if (ret == null) {
-                int dot = qual.lastIndexOf('.');
-                if (dot > 0) ret = functionReturns.get(qual.substring(dot + 1));
+            aliasBinderChain(functionReturns, callReturns, qual, local);
+            int dot = qual.lastIndexOf('.');
+            if (dot > 0) {
+                aliasBinderChain(functionReturns, callReturns, qual.substring(dot + 1), local);
             }
-            if (ret == null || ret.isEmpty()) continue;
-            functionReturns.putIfAbsent(local, ret);
-            callReturns.putIfAbsent(local, ret);
+        }
+    }
+
+    /** Copy {@code from} / {@code from()} / {@code from()()} binder keys onto {@code to}. */
+    private static void aliasBinderChain(Map<String, List<String>> functionReturns,
+                                         Map<String, List<String>> callReturns,
+                                         String from, String to) {
+        if (from == null || to == null || from.isEmpty() || to.isEmpty()) return;
+        for (Map.Entry<String, List<String>> e : List.copyOf(functionReturns.entrySet())) {
+            String key = e.getKey();
+            if (key == null) continue;
+            if (!key.equals(from) && !key.startsWith(from + "()")) continue;
+            String localKey = to + key.substring(from.length());
+            functionReturns.putIfAbsent(localKey, e.getValue());
+            callReturns.putIfAbsent(localKey, e.getValue());
+        }
+    }
+
+    /** Copy {@code from[…]} callReturns slots onto {@code to[…]}. */
+    private static void copyPrefixedSlots(Map<String, List<String>> callReturns,
+                                          String from, String to) {
+        if (from == null || to == null || from.isEmpty() || to.isEmpty()) return;
+        String prefix = from + "[";
+        for (Map.Entry<String, List<String>> e : List.copyOf(callReturns.entrySet())) {
+            if (!e.getKey().startsWith(prefix)) continue;
+            callReturns.putIfAbsent(to + e.getKey().substring(from.length()), e.getValue());
         }
     }
 

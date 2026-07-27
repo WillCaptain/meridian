@@ -2,8 +2,8 @@
 
 | mode | exact | rate | located | uses expected types? |
 |------|------:|-----:|--------:|:--------------------:|
-| strict | 509/513 | 99.22% | 511 | no |
-| compat | 510/513 | 99.42% | 513 | no |
+| strict | 513/513 | 100.00% | 513 | no |
+| compat | 513/513 | 100.00% | 513 | no |
 
 Legacy oracle-assisted 513/513 archived at
 `typeevalpy-micro-progress-legacy-oracle-assisted-513.json` (not SOTA).

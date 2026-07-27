@@ -8,25 +8,25 @@
 - Outline ref: `toplas-typeevalpy-513 / TYPEEVALPY-FACT-MANIFEST.csv`
 - Micro root: `/tmp/typeevalpy-artifacts/artifacts/results-microbenchmark/codestral-v0.1-22b-q&a-prompt/micro-benchmark/python_features`
 - Scoring mode: `strict`
-- **Exact: 509/513 (99.22%)**
-- Located (any type): 511
-- Elapsed: 163.6s
+- **Exact: 513/513 (100.00%)**
+- Located (any type): 513
+- Elapsed: 164.5s
 
 ## Modes
 
 | mode | exact | rate | located | uses expected types? |
 |------|------:|-----:|--------:|:--------------------:|
-| strict | 509/513 | 99.22% | 511 | no |
-| compat | 510/513 | 99.42% | 513 | no |
+| strict | 513/513 | 100.00% | 513 | no |
+| compat | 513/513 | 100.00% | 513 | no |
 
 ## By category
 
 | category | exact | total | rate |
 |----------|------:|------:|-----:|
-| assignments | 81 | 82 | 98.78% |
-| classes | 124 | 125 | 99.20% |
-| dicts | 107 | 108 | 99.07% |
-| direct_calls | 23 | 24 | 95.83% |
+| assignments | 82 | 82 | 100.00% |
+| classes | 125 | 125 | 100.00% |
+| dicts | 108 | 108 | 100.00% |
+| direct_calls | 24 | 24 | 100.00% |
 | functions | 37 | 37 | 100.00% |
 | lambdas | 34 | 34 | 100.00% |
 | lists | 60 | 60 | 100.00% |
@@ -36,9 +36,7 @@
 
 | status | n |
 |--------|--:|
-| EXACT | 509 |
-| MISS_LOCATION | 2 |
-| MISS_TYPE | 2 |
+| EXACT | 513 |
 
 ## How to re-run
 

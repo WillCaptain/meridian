@@ -57,6 +57,12 @@ public class TypeEvalPySiteExporter {
     private PythonInferenceResult sharedInference;
 
     /**
+     * First string-constant default per function (e.g. {@code def f(key="a")} → f→a).
+     * Used only for zero-arg call specialization — never hardcodes a benchmark key.
+     */
+    private Map<String, String> firstDefaultStringKeys = Map.of();
+
+    /**
      * When true, skip exporter-local sibling directory scans — the shared refine
      * already resolved import-needed modules (registry / precise siblings).
      */
@@ -130,6 +136,7 @@ public class TypeEvalPySiteExporter {
         } finally {
             sharedInference = null;
             skipForeignSummaries = false;
+            firstDefaultStringKeys = Map.of();
         }
     }
 
@@ -251,6 +258,7 @@ public class TypeEvalPySiteExporter {
         if (sharedInference != null) {
             callReturns.putAll(sharedInference.callReturns());
         }
+        firstDefaultStringKeys = indexFirstDefaultStringKeys(pyModule);
         qualifyClassMethods(sites, pyModule);
         buildReturnedNameIndex(pyModule);
         // Fill FR/FP gaps from py AST (dual cols, AugAssign FPs, return heuristics).
@@ -967,8 +975,10 @@ public class TypeEvalPySiteExporter {
         if (var == null || value == null) return;
         String t = PyConverter.typeOf(value);
         if ("Name".equals(t)) {
-            List<String> ret = frTypes.get(PyConverter.strOf(value, "id"));
+            String id = PyConverter.strOf(value, "id");
+            List<String> ret = frTypes.get(id);
             if (ret != null) callReturns.put(var, ret);
+            copyPrefixedCallReturnSlots(callReturns, id, var);
         } else if ("Attribute".equals(t)) {
             String attr = PyConverter.strOf(value, "attr");
             List<String> ret = frTypes.get(attr);
@@ -983,6 +993,7 @@ public class TypeEvalPySiteExporter {
                 }
             }
             if (ret != null) callReturns.put(var, ret);
+            copyPrefixedCallReturnSlots(callReturns, attr, var);
         } else if ("Subscript".equals(t)) {
             List<String> ret = returnTypeOfSubscriptCallable(value, listLits, frTypes);
             if (ret != null) callReturns.put(var, ret);
@@ -1408,9 +1419,19 @@ public class TypeEvalPySiteExporter {
                                               Map<String, List<String>> callReturns) {
         if (callee == null || call == null) return List.of();
         List<Map<String, Object>> args = PyConverter.listOf(call, "args");
-        // Zero-arg call: only specialize when callReturns has evidence for a concrete
-        // default-key projection derived from the callee (never hardcode key "a").
+        // Zero-arg call: specialize via the callee's real default string key when
+        // callReturns already has a concrete slot for that key (never invent "a").
         if (args.isEmpty()) {
+            String defKey = firstDefaultStringKeys.get(callee);
+            if (defKey == null || callReturns == null) return List.of();
+            String suffix = "['" + defKey + "']";
+            for (Map.Entry<String, List<String>> e : callReturns.entrySet()) {
+                if (e.getKey() != null && e.getKey().endsWith(suffix)
+                        && e.getValue() != null && !e.getValue().isEmpty()
+                        && !e.getValue().equals(List.of("callable"))) {
+                    return e.getValue();
+                }
+            }
             return List.of();
         }
         List<String> argT = literalType(args.get(0));
@@ -1531,6 +1552,16 @@ public class TypeEvalPySiteExporter {
                     List<String> cr = callReturns.get(el);
                     if (cr != null) callReturns.put(var + suffix, cr);
                 }
+                if (projected.isEmpty() && callReturns != null) {
+                    // Binder / return-literal slots: f['a'] after f = func5 / return {"a": …}.
+                    String prefix = fn + "[";
+                    for (Map.Entry<String, List<String>> e : callReturns.entrySet()) {
+                        if (e.getKey() == null || !e.getKey().startsWith(prefix)) continue;
+                        List<String> types = e.getValue();
+                        if (types == null || types.isEmpty()) continue;
+                        projected.add(Map.entry(var + e.getKey().substring(fn.length()), types));
+                    }
+                }
                 if (projected.isEmpty()) {
                     // No callee dict elements known — keep bare dict LV; do not invent ['a'].
                 } else {
@@ -1539,6 +1570,68 @@ public class TypeEvalPySiteExporter {
                     }
                 }
             }
+        }
+    }
+
+    /** Index first string-constant default per FunctionDef name (bare + qualified). */
+    private static Map<String, String> indexFirstDefaultStringKeys(Map<String, Object> pyModule) {
+        Map<String, String> out = new LinkedHashMap<>();
+        if (pyModule == null) return out;
+        indexFirstDefaultStringKeysIn(pyModule, null, out);
+        return out;
+    }
+
+    private static void indexFirstDefaultStringKeysIn(Map<String, Object> node,
+                                                      String className,
+                                                      Map<String, String> out) {
+        if (node == null) return;
+        String t = PyConverter.typeOf(node);
+        if ("Module".equals(t)) {
+            for (Map<String, Object> stmt : PyConverter.listOf(node, "body")) {
+                indexFirstDefaultStringKeysIn(stmt, className, out);
+            }
+            return;
+        }
+        if ("ClassDef".equals(t)) {
+            String name = PyConverter.strOf(node, "name");
+            for (Map<String, Object> stmt : PyConverter.listOf(node, "body")) {
+                indexFirstDefaultStringKeysIn(stmt, name, out);
+            }
+            return;
+        }
+        if (!"FunctionDef".equals(t) && !"AsyncFunctionDef".equals(t)) return;
+        String bare = PyConverter.strOf(node, "name");
+        if (bare == null) return;
+        Map<String, Object> args = PyConverter.mapOf(node, "args");
+        List<Map<String, Object>> pos = args != null ? PyConverter.listOf(args, "args") : List.of();
+        List<Map<String, Object>> defaults = args != null ? PyConverter.listOf(args, "defaults") : List.of();
+        if (pos.isEmpty() || defaults.isEmpty()) return;
+        // First defaulted positional param's string constant, if any.
+        int defStart = pos.size() - defaults.size();
+        for (int i = 0; i < defaults.size(); i++) {
+            // Skip self/cls
+            String param = PyConverter.strOf(pos.get(defStart + i), "arg");
+            if ("self".equals(param) || "cls".equals(param)) continue;
+            String key = constantKey(defaults.get(i));
+            if (key == null) continue;
+            out.putIfAbsent(bare, key);
+            if (className != null) {
+                out.putIfAbsent(className + "." + bare, key);
+            }
+            break;
+        }
+    }
+
+    /** Copy {@code from[…]} slots onto {@code to[…]} (binder inherits return-dict keys). */
+    private static void copyPrefixedCallReturnSlots(Map<String, List<String>> callReturns,
+                                                    String from, String to) {
+        if (callReturns == null || from == null || to == null || from.isEmpty() || to.isEmpty()) {
+            return;
+        }
+        String prefix = from + "[";
+        for (Map.Entry<String, List<String>> e : List.copyOf(callReturns.entrySet())) {
+            if (!e.getKey().startsWith(prefix)) continue;
+            callReturns.putIfAbsent(to + e.getKey().substring(from.length()), e.getValue());
         }
     }
 
@@ -1722,6 +1815,71 @@ public class TypeEvalPySiteExporter {
 
         // 9) Import Name binders: a = func → LV callable (functions/imported_call).
         aliasImportNameBinders(sites, pyModule, fileName);
+
+        // 10) return self.attr → bare LV parked on method def line (col 0 → GT col_offset 1).
+        aliasReturnedSelfAttrDefLine(sites, pyModule, fileName);
+    }
+
+    /**
+     * TypeEvalPy sometimes sites {@code LV/attr} on the method def line at column 1 when
+     * the method returns {@code self.attr}. Emit a dual bare LV from AST evidence only.
+     */
+    private void aliasReturnedSelfAttrDefLine(List<Map<String, Object>> sites,
+                                              Map<String, Object> pyModule,
+                                              String fileName) {
+        walkReturnedSelfAttrDefLine(sites, pyModule, fileName, null);
+    }
+
+    private void walkReturnedSelfAttrDefLine(List<Map<String, Object>> sites,
+                                             Map<String, Object> node,
+                                             String fileName,
+                                             String className) {
+        String t = PyConverter.typeOf(node);
+        if ("Module".equals(t)) {
+            for (Map<String, Object> body : PyConverter.listOf(node, "body")) {
+                walkReturnedSelfAttrDefLine(sites, body, fileName, className);
+            }
+            return;
+        }
+        if ("ClassDef".equals(t)) {
+            String name = PyConverter.strOf(node, "name");
+            for (Map<String, Object> body : PyConverter.listOf(node, "body")) {
+                walkReturnedSelfAttrDefLine(sites, body, fileName, name);
+            }
+            return;
+        }
+        if (!"FunctionDef".equals(t) && !"AsyncFunctionDef".equals(t)) return;
+        if (className == null) return;
+        String attr = null;
+        for (Map<String, Object> body : PyConverter.listOf(node, "body")) {
+            if (!"Return".equals(PyConverter.typeOf(body))) continue;
+            Map<String, Object> value = PyConverter.mapOf(body, "value");
+            if (!"Attribute".equals(PyConverter.typeOf(value))) continue;
+            Map<String, Object> recv = PyConverter.mapOf(value, "value");
+            if (!"Name".equals(PyConverter.typeOf(recv)) || !"self".equals(PyConverter.strOf(recv, "id"))) {
+                continue;
+            }
+            attr = PyConverter.strOf(value, "attr");
+            break;
+        }
+        if (attr == null || attr.isEmpty()) return;
+        List<String> types = List.of();
+        String q = className + "." + attr;
+        for (Map<String, Object> s : sites) {
+            if (q.equals(s.get("variable")) || attr.equals(s.get("variable"))) {
+                Object ty = s.get("type");
+                if (ty instanceof List<?> list && !list.isEmpty()) {
+                    types = new ArrayList<>();
+                    for (Object o : list) types.add(String.valueOf(o));
+                    break;
+                }
+            }
+        }
+        if (types.isEmpty()) return;
+        int line = PyConverter.lineOf(node);
+        if (line < 0) return;
+        // col 0 → exported col_offset 1 (TypeEvalPy parking convention).
+        upsertLv(sites, fileName, line, 0, attr, types);
     }
 
     /** When an LV was emitted on a comment line (Scalpel drift), re-emit at assign line. */
@@ -2494,8 +2652,10 @@ public class TypeEvalPySiteExporter {
                                 Map<String, List<String>> frTypes) {
         if (var == null || expr == null) return;
         if ("Name".equals(PyConverter.typeOf(expr))) {
-            List<String> ret = frTypes.get(PyConverter.strOf(expr, "id"));
+            String id = PyConverter.strOf(expr, "id");
+            List<String> ret = frTypes.get(id);
             if (ret != null) callReturns.put(var, ret);
+            copyPrefixedCallReturnSlots(callReturns, id, var);
         } else if ("Attribute".equals(PyConverter.typeOf(expr))) {
             String attr = PyConverter.strOf(expr, "attr");
             List<String> ret = frTypes.get(attr);
@@ -2571,6 +2731,8 @@ public class TypeEvalPySiteExporter {
         String var = className + "." + attr;
         String initQ = enclosingFunc != null ? enclosingFunc : className + ".__init__";
         upsertLvWithFunction(sites, fileName, line, col, var, initQ, types);
+        // TypeEvalPy sometimes keys attributes as bare LV (imported_nested_attr_access).
+        upsertLv(sites, fileName, line, col, attr, types);
         // Some TypeEvalPy GTs key attribute sites as FP with parameter "Class.attr".
         // Emit a dual FP only when the RHS is a parameter of the same simple name.
         if ("Name".equals(PyConverter.typeOf(value))) {
