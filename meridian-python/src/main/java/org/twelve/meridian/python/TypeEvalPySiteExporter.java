@@ -1145,23 +1145,9 @@ public class TypeEvalPySiteExporter {
                                               Map<String, List<String>> callReturns) {
         if (callee == null || call == null) return List.of();
         List<Map<String, Object>> args = PyConverter.listOf(call, "args");
-        // Zero-arg call: default dict-key dispatch only for polymorphic key→value
-        // callees (FR is a multi-type union). Never rewrite concrete container FRs
-        // (e.g. func1()→dict) using unrelated d['a'] callReturns in the module.
+        // Zero-arg call: only specialize when callReturns has evidence for a concrete
+        // default-key projection derived from the callee (never hardcode key "a").
         if (args.isEmpty()) {
-            List<String> calleeFr = findFrTypes(sites, callee, callee);
-            if (calleeFr.size() <= 1) return List.of();
-            if (callReturns != null) {
-                for (Map.Entry<String, List<String>> e : callReturns.entrySet()) {
-                    if (e.getKey().endsWith("['a']") && e.getValue() != null
-                            && e.getValue().size() == 1
-                            && !e.getValue().equals(List.of("callable"))
-                            && calleeFr.containsAll(e.getValue())) {
-                        return e.getValue();
-                    }
-                }
-            }
-            if (calleeFr.contains("str")) return List.of("str");
             return List.of();
         }
         List<String> argT = literalType(args.get(0));
@@ -1283,7 +1269,7 @@ public class TypeEvalPySiteExporter {
                     if (cr != null) callReturns.put(var + suffix, cr);
                 }
                 if (projected.isEmpty()) {
-                    addLv(sites, fileName, line, col, var + "['a']", List.of("str"));
+                    // No callee dict elements known — keep bare dict LV; do not invent ['a'].
                 } else {
                     for (Map.Entry<String, List<String>> e : projected) {
                         addLv(sites, fileName, line, col, e.getKey(), e.getValue());
@@ -2955,16 +2941,8 @@ public class TypeEvalPySiteExporter {
                     fromChain = true;
                 }
             }
-            // Default-key dict dispatch: only when callee FR is a multi-type union
-            // (func1 → int|str) and call has no args — narrow to str via default key "a".
-            if ((specialized.isEmpty() || specialized.size() > 1)
-                    && PyConverter.listOf(value, "args").isEmpty()) {
-                List<String> calleeFr = findFrTypes(sites, n, n);
-                if (calleeFr.size() > 1 && calleeFr.contains("str")) {
-                    specialized = List.of("str");
-                    fromChain = false;
-                }
-            }
+            // Zero-arg polymorphic FR: do not invent a default key "a" → str narrowing.
+            // Evidence must come from callReturns / specializeCallReturn only.
             if (specialized.isEmpty()) continue;
             for (Map<String, Object> target : PyConverter.listOf(stmt, "targets")) {
                 if (!"Name".equals(PyConverter.typeOf(target))) continue;
