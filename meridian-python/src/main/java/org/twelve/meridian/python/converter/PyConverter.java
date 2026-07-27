@@ -275,6 +275,11 @@ public abstract class PyConverter {
         return (String) node.get("_type");
     }
 
+    /** True when {@code pyNode} is a Python {@code Dict} literal AST node. */
+    protected static boolean isDictLiteral(Map<String, Object> pyNode) {
+        return "Dict".equals(typeOf(pyNode));
+    }
+
     public static Identifier identifier(AST ast, String name) {
         return identifier(ast, name, (Map<String, Object>) null);
     }

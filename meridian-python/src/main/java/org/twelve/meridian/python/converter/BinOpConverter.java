@@ -26,9 +26,12 @@ public class BinOpConverter extends PyConverter {
         if (left == null || right == null) return null;
 
         String opType = typeOf(mapOf(pyNode, "op"));
-        // Python 3.9+ dict union {@code d1 | d2} → GCP {@code d1.merge(d2)}.
-        // Micro-benchmark dicts/merge_pipe relies on this; int bitwise-or is unused there.
-        if ("BitOr".equals(opType)) {
+        // Python 3.9+ dict literal union only: {@code {'a': 1} | d2} → merge.
+        // Named {@code d1 | d2} and {@code int | int} use generic {@code BITWISE_OR}
+        // until receiver-sensitive operator dispatch lands in GCP.
+        if ("BitOr".equals(opType)
+                && (isDictLiteral(mapOf(pyNode, "left"))
+                || isDictLiteral(mapOf(pyNode, "right")))) {
             Expression merge = new MemberAccessor(left, identifier(ast, "merge"));
             return new FunctionCallNode(merge, right);
         }
