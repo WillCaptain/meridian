@@ -43,6 +43,62 @@ class PythonSemanticRefinerTest {
     }
 
     @Test
+    void returnedCallableBindsThroughAssignment() {
+        PythonInferenceResult r = new PythonInferencer().inferDetailed("""
+                def other():
+                    return 1
+
+                def make():
+                    return other
+
+                x = make()
+                y = x()
+                """);
+        assertEquals(List.of("int"), r.callReturns().get("x"),
+                () -> String.valueOf(r.callReturns()));
+        assertEquals(List.of("int"), r.callResults().get("y"),
+                () -> String.valueOf(r.callResults()));
+    }
+
+    @Test
+    void receiverSensitiveMethodDoesNotFirstMatch() {
+        PythonInferenceResult r = new PythonInferencer().inferDetailed("""
+                class A:
+                    def run(self):
+                        return 1
+
+                class B:
+                    def run(self):
+                        return "x"
+
+                a = A()
+                b = B()
+                xa = a.run()
+                xb = b.run()
+                """);
+        assertEquals("A", r.receiverTypes().get("a"));
+        assertEquals("B", r.receiverTypes().get("b"));
+        assertEquals(List.of("int"), r.methodReturns().get("A.run"));
+        assertEquals(List.of("str"), r.methodReturns().get("B.run"));
+        assertEquals(List.of("int"), r.callResults().get("xa"));
+        assertEquals(List.of("str"), r.callResults().get("xb"));
+    }
+
+    @Test
+    void stubUsesSharedCallSiteParamHints() {
+        String stub = new PythonInferencer().toStub("""
+                def add(a, b):
+                    return a + b
+
+                x = add(1, 2)
+                """);
+        assertTrue(stub.contains("a: int") || stub.contains("def add(a: int"),
+                () -> stub);
+        assertTrue(stub.contains("b: int") || stub.contains(", b: int"),
+                () -> stub);
+    }
+
+    @Test
     void inferStubAndSitesShareRefinedResult() throws Exception {
         Path py = tmp.resolve("shared.py");
         Files.writeString(py, """

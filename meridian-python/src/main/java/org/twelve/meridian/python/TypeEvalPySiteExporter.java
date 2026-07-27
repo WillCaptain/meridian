@@ -103,6 +103,7 @@ public class TypeEvalPySiteExporter {
                 }
                 enrichFromPythonAst(sites, pyAst, fileName, sourcePath);
                 applySharedContainerElements(sites, fileName);
+                applySharedCallResults(sites, fileName);
             }
             return sites;
         } finally {
@@ -225,6 +226,9 @@ public class TypeEvalPySiteExporter {
         Map<String, Map<String, Object>> dictLits = new HashMap<>();
         // var → return type when called (from bound callables)
         Map<String, List<String>> callReturns = new HashMap<>();
+        if (sharedInference != null) {
+            callReturns.putAll(sharedInference.callReturns());
+        }
         qualifyClassMethods(sites, pyModule);
         buildReturnedNameIndex(pyModule);
         // Fill FR/FP gaps from py AST (dual cols, AugAssign FPs, return heuristics).
@@ -436,6 +440,32 @@ public class TypeEvalPySiteExporter {
                 }
             }
             addLv(sites, fileName, line, col0, path, types);
+        }
+    }
+
+    /** Apply call-result types from shared refine ({@code y = obj.m()}) onto LV sites. */
+    private void applySharedCallResults(List<Map<String, Object>> sites, String fileName) {
+        if (sharedInference == null) return;
+        for (Map.Entry<String, List<String>> e : sharedInference.callResults().entrySet()) {
+            String var = e.getKey();
+            List<String> types = e.getValue();
+            if (var == null || types == null || types.isEmpty()) continue;
+            boolean updated = false;
+            for (Map<String, Object> s : sites) {
+                if (!var.equals(s.get("variable"))) continue;
+                Object cur = s.get("type");
+                if (cur instanceof List<?> list && !list.isEmpty()
+                        && !list.equals(List.of("callable"))
+                        && !list.equals(List.of("Any"))) {
+                    updated = true;
+                    continue;
+                }
+                s.put("type", types);
+                updated = true;
+            }
+            if (!updated) {
+                addLv(sites, fileName, 1, 0, var, types);
+            }
         }
     }
 

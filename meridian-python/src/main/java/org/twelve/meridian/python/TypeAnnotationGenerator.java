@@ -31,6 +31,7 @@ import org.twelve.gcp.outline.projectable.Projectable;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Generates Python type stub ({@code .pyi}) content from a fully-inferred GCP {@link AST}.
@@ -46,7 +47,33 @@ import java.util.List;
  */
 public class TypeAnnotationGenerator {
 
+    private Map<String, Map<String, List<String>>> paramOverrides = Map.of();
+
     public String generate(AST ast) {
+        return generate(ast, Map.of());
+    }
+
+    /**
+     * Generate a stub using GCP outlines, overlaying call-site refined parameter types
+     * from a shared {@link PythonInferenceResult}.
+     */
+    public String generate(PythonInferenceResult result) {
+        if (result == null) {
+            throw new IllegalArgumentException("result");
+        }
+        return generate(result.gcpAst(), result.refinedParams());
+    }
+
+    public String generate(AST ast, Map<String, Map<String, List<String>>> refinedParams) {
+        paramOverrides = refinedParams != null ? refinedParams : Map.of();
+        try {
+            return generateBody(ast);
+        } finally {
+            paramOverrides = Map.of();
+        }
+    }
+
+    private String generateBody(AST ast) {
         // First pass: generate content to detect which typing imports are needed
         StringBuilder content = new StringBuilder();
         ProgramBody body = ast.program().body();
@@ -119,11 +146,20 @@ public class TypeAnnotationGenerator {
 
         List<Argument> args = flattenFunctionArgs(fn);
         List<String> paramHints = new ArrayList<>();
+        Map<String, List<String>> overrides = paramOverrides.getOrDefault(name, Map.of());
         for (int i = 0; i < args.size(); i++) {
             if (i > 0) sb.append(", ");
             Argument a = args.get(i);
             String argName = a.name();   // use .name(), not .lexeme() which includes type annotation
-            String argType = resolveType(a.declared(), a.outline());
+            // Call-site refined params beat GCP operator unions when present.
+            String argType = null;
+            List<String> fromCall = overrides.get(argName);
+            if (fromCall != null && !fromCall.isEmpty()) {
+                argType = fromCall.get(0);
+            }
+            if (argType == null) {
+                argType = resolveType(a.declared(), a.outline());
+            }
             sb.append(argName);
             if (argType != null) {
                 sb.append(": ").append(argType);

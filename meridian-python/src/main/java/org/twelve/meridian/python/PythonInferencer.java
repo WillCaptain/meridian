@@ -193,19 +193,19 @@ public class PythonInferencer {
     // ── pipeline shortcuts ─────────────────────────────────────────────────────
 
     /**
-     * Full pipeline: Python source → inferred GCP AST → {@code .pyi} stub string.
+     * Full pipeline: Python source → inferred + refined → {@code .pyi} stub string.
      */
     public String toStub(String pythonSource) {
-        AST ast = infer(pythonSource);
-        return generator.generate(ast);
+        PythonInferenceResult result = inferDetailed(pythonSource);
+        return generator.generate(result);
     }
 
     /**
      * Full pipeline for a Python file, writing the stub to {@code outputFile}.
      */
     public void annotate(File pythonFile, File outputFile) throws IOException {
-        AST ast = inferFile(pythonFile);
-        String stub = generator.generate(ast);
+        PythonInferenceResult result = inferFileDetailed(pythonFile).inference();
+        String stub = generator.generate(result);
         Files.writeString(outputFile.toPath(), stub, StandardCharsets.UTF_8);
     }
 
@@ -214,8 +214,8 @@ public class PythonInferencer {
      * as {@code <name>.pyi}.
      */
     public File annotate(File pythonFile) throws IOException {
-        AST ast = inferFile(pythonFile);
-        String stub = generator.generate(ast);
+        PythonInferenceResult result = inferFileDetailed(pythonFile).inference();
+        String stub = generator.generate(result);
         String pyiName = pythonFile.getName().replaceAll("\\.py$", "") + ".pyi";
         File out = new File(pythonFile.getParentFile(), pyiName);
         Files.writeString(out.toPath(), stub, StandardCharsets.UTF_8);

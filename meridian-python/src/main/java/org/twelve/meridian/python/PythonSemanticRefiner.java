@@ -16,10 +16,12 @@ import java.util.Set;
  * Language-specific refinement on top of GCP: Python semantics that do not map
  * 1:1 into GCP AST. Knows nothing about TypeEvalPy sites / FR / FP / LV.
  *
- * <p>Phase-1 rules:
+ * <p>Active rules:
  * <ol>
  *   <li>Call-site argument → parameter type constraints</li>
  *   <li>Container literal element projection ({@code d['foo']}, {@code xs[0]})</li>
+ *   <li>Returned-callable / binder data-flow ({@code x = f}; {@code return other})</li>
+ *   <li>Receiver-sensitive method returns ({@code obj = C(); obj.m()})</li>
  * </ol>
  */
 public final class PythonSemanticRefiner {
@@ -29,7 +31,16 @@ public final class PythonSemanticRefiner {
         Map<String, List<List<String>>> callSiteArgTypes = collectCallArgTypes(pyAst);
         Map<String, List<String>> containerElements = new LinkedHashMap<>();
         Map<String, List<String>> callReturns = new LinkedHashMap<>();
-        projectContainerLiterals(pyAst, containerElements, callReturns);
+        Map<String, List<String>> methodReturns = new LinkedHashMap<>();
+        Map<String, List<String>> functionReturns = new LinkedHashMap<>();
+        Map<String, String> receiverTypes = new LinkedHashMap<>();
+        Map<String, List<String>> callResults = new LinkedHashMap<>();
+
+        indexFunctionReturns(pyAst, functionReturns, methodReturns);
+        projectContainerLiterals(pyAst, containerElements, callReturns, functionReturns);
+        bindReturnedCallablesAndReceivers(
+                pyAst, functionReturns, methodReturns, callReturns, receiverTypes, callResults);
+
         Map<String, Map<String, List<String>>> refinedParams =
                 refineParamsFromCallSites(pyAst, callSiteArgTypes);
 
@@ -41,7 +52,10 @@ public final class PythonSemanticRefiner {
                 callSiteArgTypes,
                 containerElements,
                 callReturns,
-                refinedParams);
+                refinedParams,
+                methodReturns,
+                callResults,
+                receiverTypes);
     }
 
     public PythonInferenceResult refine(AST gcpAst, Map<String, Object> pyAst, String fileName) {
@@ -203,32 +217,34 @@ public final class PythonSemanticRefiner {
 
     private static void projectContainerLiterals(Map<String, Object> pyModule,
                                                  Map<String, List<String>> elements,
-                                                 Map<String, List<String>> callReturns) {
+                                                 Map<String, List<String>> callReturns,
+                                                 Map<String, List<String>> functionReturns) {
         if (pyModule == null) return;
-        walkAssigns(pyModule, elements, callReturns);
+        walkAssignsForContainers(pyModule, elements, callReturns, functionReturns);
     }
 
-    private static void walkAssigns(Map<String, Object> node,
-                                    Map<String, List<String>> elements,
-                                    Map<String, List<String>> callReturns) {
+    private static void walkAssignsForContainers(Map<String, Object> node,
+                                                 Map<String, List<String>> elements,
+                                                 Map<String, List<String>> callReturns,
+                                                 Map<String, List<String>> functionReturns) {
         if (node == null || node.isEmpty()) return;
         if ("Assign".equals(PyConverter.typeOf(node))) {
             Map<String, Object> value = PyConverter.mapOf(node, "value");
             for (Map<String, Object> target : PyConverter.listOf(node, "targets")) {
-                projectNameBinding(target, value, elements, callReturns);
+                projectNameBinding(target, value, elements, callReturns, functionReturns);
             }
         }
         for (Object v : node.values()) {
             if (v instanceof Map<?, ?> m) {
                 @SuppressWarnings("unchecked")
                 Map<String, Object> child = (Map<String, Object>) m;
-                walkAssigns(child, elements, callReturns);
+                walkAssignsForContainers(child, elements, callReturns, functionReturns);
             } else if (v instanceof List<?> list) {
                 for (Object o : list) {
                     if (o instanceof Map<?, ?> m) {
                         @SuppressWarnings("unchecked")
                         Map<String, Object> child = (Map<String, Object>) m;
-                        walkAssigns(child, elements, callReturns);
+                        walkAssignsForContainers(child, elements, callReturns, functionReturns);
                     }
                 }
             }
@@ -238,7 +254,8 @@ public final class PythonSemanticRefiner {
     private static void projectNameBinding(Map<String, Object> target,
                                            Map<String, Object> value,
                                            Map<String, List<String>> elements,
-                                           Map<String, List<String>> callReturns) {
+                                           Map<String, List<String>> callReturns,
+                                           Map<String, List<String>> functionReturns) {
         if (!"Name".equals(PyConverter.typeOf(target))) return;
         String name = PyConverter.strOf(target, "id");
         if (name == null || value == null) return;
@@ -251,39 +268,247 @@ public final class PythonSemanticRefiner {
                 if (et.isEmpty() && "Name".equals(PyConverter.typeOf(elt))) {
                     et = List.of("callable");
                     String id = PyConverter.strOf(elt, "id");
-                    if (id != null) callReturns.put(name + "[" + i + "]", List.of());
+                    List<String> fr = id == null ? null : functionReturns.get(id);
+                    if (fr != null) callReturns.put(name + "[" + i + "]", fr);
                 }
                 if (et.isEmpty() || et.equals(List.of("Any"))) continue;
                 elements.put(name + "[" + i + "]", et);
             }
         } else if ("Dict".equals(PyConverter.typeOf(value))) {
-            projectDictElements(name, value, elements, callReturns);
+            projectDictElements(name, value, elements, callReturns, functionReturns);
         }
     }
 
     private static void projectDictElements(String dictName,
                                             Map<String, Object> dictLit,
                                             Map<String, List<String>> elements,
-                                            Map<String, List<String>> callReturns) {
+                                            Map<String, List<String>> callReturns,
+                                            Map<String, List<String>> functionReturns) {
         List<Map<String, Object>> keys = PyConverter.listOf(dictLit, "keys");
         List<Map<String, Object>> values = PyConverter.listOf(dictLit, "values");
         int n = Math.min(keys.size(), values.size());
         for (int i = 0; i < n; i++) {
             Map<String, Object> key = keys.get(i);
             Map<String, Object> val = values.get(i);
-            if (key == null) continue; // **unpack
+            if (key == null) continue;
             String path = constantIndexSite(dictName, key);
             if (path == null) continue;
             List<String> et = literalType(val);
             if (et.isEmpty() && "Name".equals(PyConverter.typeOf(val))) {
                 et = List.of("callable");
                 String id = PyConverter.strOf(val, "id");
-                if (id != null) callReturns.put(path, List.of());
+                List<String> fr = id == null ? null : functionReturns.get(id);
+                if (fr != null) callReturns.put(path, fr);
             }
             if (et.isEmpty()) continue;
             elements.put(path, et);
             if ("Dict".equals(PyConverter.typeOf(val))) {
-                projectDictElements(path, val, elements, callReturns);
+                projectDictElements(path, val, elements, callReturns, functionReturns);
+            }
+        }
+    }
+
+    // ── Rule 3+4: returned callable + receiver-sensitive methods ──────────────
+
+    private static void indexFunctionReturns(Map<String, Object> pyModule,
+                                             Map<String, List<String>> functionReturns,
+                                             Map<String, List<String>> methodReturns) {
+        if (pyModule == null) return;
+        for (Map<String, Object> stmt : PyConverter.listOf(pyModule, "body")) {
+            indexFunctionReturnsInStmt(stmt, null, functionReturns, methodReturns);
+        }
+        // Second pass: resolve {@code return other_func} once other_func is indexed.
+        for (Map<String, Object> stmt : PyConverter.listOf(pyModule, "body")) {
+            resolveReturnedNameReturns(stmt, null, functionReturns, methodReturns);
+        }
+    }
+
+    private static void indexFunctionReturnsInStmt(Map<String, Object> stmt,
+                                                   String className,
+                                                   Map<String, List<String>> functionReturns,
+                                                   Map<String, List<String>> methodReturns) {
+        String t = PyConverter.typeOf(stmt);
+        if ("ClassDef".equals(t)) {
+            String name = PyConverter.strOf(stmt, "name");
+            for (Map<String, Object> bodyStmt : PyConverter.listOf(stmt, "body")) {
+                indexFunctionReturnsInStmt(bodyStmt, name, functionReturns, methodReturns);
+            }
+            return;
+        }
+        if (!"FunctionDef".equals(t) && !"AsyncFunctionDef".equals(t)) return;
+        String bare = PyConverter.strOf(stmt, "name");
+        if (bare == null) return;
+        String qname = className != null ? className + "." + bare : bare;
+        List<String> ret = returnTypesFromBody(stmt);
+        if (!ret.isEmpty()) {
+            functionReturns.put(bare, ret);
+            functionReturns.put(qname, ret);
+            if (className != null) {
+                methodReturns.put(qname, ret);
+            }
+        }
+    }
+
+    private static void resolveReturnedNameReturns(Map<String, Object> stmt,
+                                                   String className,
+                                                   Map<String, List<String>> functionReturns,
+                                                   Map<String, List<String>> methodReturns) {
+        String t = PyConverter.typeOf(stmt);
+        if ("ClassDef".equals(t)) {
+            String name = PyConverter.strOf(stmt, "name");
+            for (Map<String, Object> bodyStmt : PyConverter.listOf(stmt, "body")) {
+                resolveReturnedNameReturns(bodyStmt, name, functionReturns, methodReturns);
+            }
+            return;
+        }
+        if (!"FunctionDef".equals(t) && !"AsyncFunctionDef".equals(t)) return;
+        String bare = PyConverter.strOf(stmt, "name");
+        if (bare == null) return;
+        String qname = className != null ? className + "." + bare : bare;
+        for (Map<String, Object> bodyStmt : PyConverter.listOf(stmt, "body")) {
+            if (!"Return".equals(PyConverter.typeOf(bodyStmt))) continue;
+            Map<String, Object> value = PyConverter.mapOf(bodyStmt, "value");
+            if (!"Name".equals(PyConverter.typeOf(value))) continue;
+            String other = PyConverter.strOf(value, "id");
+            List<String> otherRet = functionReturns.get(other);
+            if (otherRet == null || otherRet.isEmpty()) continue;
+            // Returning a function object: call of this function yields a callable whose
+            // subsequent call uses otherRet. Represented on callReturns of binders.
+            functionReturns.putIfAbsent(bare, List.of("callable"));
+            functionReturns.putIfAbsent(qname, List.of("callable"));
+            // Alias: calling the returned callable uses other's return.
+            functionReturns.put(bare + "()", otherRet);
+            functionReturns.put(qname + "()", otherRet);
+            if (className != null) {
+                methodReturns.putIfAbsent(qname, List.of("callable"));
+                methodReturns.put(qname + "()", otherRet);
+            }
+        }
+    }
+
+    private static List<String> returnTypesFromBody(Map<String, Object> func) {
+        LinkedHashSet<String> out = new LinkedHashSet<>();
+        for (Map<String, Object> bodyStmt : PyConverter.listOf(func, "body")) {
+            if (!"Return".equals(PyConverter.typeOf(bodyStmt))) continue;
+            Map<String, Object> value = PyConverter.mapOf(bodyStmt, "value");
+            List<String> lit = literalType(value);
+            if (!lit.isEmpty() && !lit.equals(List.of("callable"))) {
+                out.addAll(lit);
+            }
+        }
+        return List.copyOf(out);
+    }
+
+    private static void bindReturnedCallablesAndReceivers(
+            Map<String, Object> pyModule,
+            Map<String, List<String>> functionReturns,
+            Map<String, List<String>> methodReturns,
+            Map<String, List<String>> callReturns,
+            Map<String, String> receiverTypes,
+            Map<String, List<String>> callResults) {
+        if (pyModule == null) return;
+        walkAssignsForDataFlow(
+                pyModule, functionReturns, methodReturns, callReturns, receiverTypes, callResults);
+    }
+
+    private static void walkAssignsForDataFlow(
+            Map<String, Object> node,
+            Map<String, List<String>> functionReturns,
+            Map<String, List<String>> methodReturns,
+            Map<String, List<String>> callReturns,
+            Map<String, String> receiverTypes,
+            Map<String, List<String>> callResults) {
+        if (node == null || node.isEmpty()) return;
+        String t = PyConverter.typeOf(node);
+        // Preserve program order for Module / function / class bodies.
+        if ("Module".equals(t) || "FunctionDef".equals(t) || "AsyncFunctionDef".equals(t)
+                || "ClassDef".equals(t)) {
+            for (Map<String, Object> stmt : PyConverter.listOf(node, "body")) {
+                walkAssignsForDataFlow(stmt, functionReturns, methodReturns,
+                        callReturns, receiverTypes, callResults);
+            }
+            return;
+        }
+        if ("Assign".equals(t)) {
+            Map<String, Object> value = PyConverter.mapOf(node, "value");
+            for (Map<String, Object> target : PyConverter.listOf(node, "targets")) {
+                if (!"Name".equals(PyConverter.typeOf(target))) continue;
+                String var = PyConverter.strOf(target, "id");
+                if (var == null || value == null) continue;
+                bindOneAssign(var, value, functionReturns, methodReturns,
+                        callReturns, receiverTypes, callResults);
+            }
+            return;
+        }
+        if ("If".equals(t) || "For".equals(t) || "While".equals(t) || "With".equals(t)) {
+            for (Map<String, Object> stmt : PyConverter.listOf(node, "body")) {
+                walkAssignsForDataFlow(stmt, functionReturns, methodReturns,
+                        callReturns, receiverTypes, callResults);
+            }
+            for (Map<String, Object> stmt : PyConverter.listOf(node, "orelse")) {
+                walkAssignsForDataFlow(stmt, functionReturns, methodReturns,
+                        callReturns, receiverTypes, callResults);
+            }
+        }
+    }
+
+    private static void bindOneAssign(String var,
+                                      Map<String, Object> value,
+                                      Map<String, List<String>> functionReturns,
+                                      Map<String, List<String>> methodReturns,
+                                      Map<String, List<String>> callReturns,
+                                      Map<String, String> receiverTypes,
+                                      Map<String, List<String>> callResults) {
+        String t = PyConverter.typeOf(value);
+        if ("Name".equals(t)) {
+            String id = PyConverter.strOf(value, "id");
+            List<String> fr = functionReturns.get(id);
+            if (fr != null) {
+                callReturns.put(var, fr);
+            }
+            List<String> viaReturned = functionReturns.get(id + "()");
+            if (viaReturned != null) {
+                callReturns.put(var + "()", viaReturned);
+            }
+            return;
+        }
+        if (!"Call".equals(t)) return;
+        Map<String, Object> func = PyConverter.mapOf(value, "func");
+        if ("Name".equals(PyConverter.typeOf(func))) {
+            String callee = PyConverter.strOf(func, "id");
+            if (callee != null && !callee.isEmpty() && Character.isUpperCase(callee.charAt(0))) {
+                receiverTypes.put(var, callee);
+                callResults.put(var, List.of(callee));
+                return;
+            }
+            // Binder previously assigned a callable: y = x()
+            List<String> viaBinder = callReturns.get(callee);
+            if (viaBinder != null && !viaBinder.isEmpty()) {
+                callResults.put(var, viaBinder);
+                return;
+            }
+            List<String> fr = functionReturns.get(callee);
+            if (fr != null && !fr.isEmpty()) {
+                callResults.put(var, fr);
+            }
+            List<String> deeper = functionReturns.get(callee + "()");
+            if (deeper != null) {
+                callReturns.put(var, deeper);
+            }
+            return;
+        }
+        if ("Attribute".equals(PyConverter.typeOf(func))) {
+            String attr = PyConverter.strOf(func, "attr");
+            Map<String, Object> recv = PyConverter.mapOf(func, "value");
+            if (!"Name".equals(PyConverter.typeOf(recv)) || attr == null) return;
+            String recvName = PyConverter.strOf(recv, "id");
+            String className = receiverTypes.get(recvName);
+            if (className == null) return;
+            String q = className + "." + attr;
+            List<String> ret = methodReturns.get(q);
+            if (ret == null) ret = functionReturns.get(q);
+            if (ret != null && !ret.isEmpty()) {
+                callResults.put(var, ret);
             }
         }
     }

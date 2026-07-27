@@ -1,6 +1,5 @@
 package org.twelve.meridian.python.cli;
 
-import org.twelve.gcp.ast.AST;
 import org.twelve.meridian.python.PythonAnnotationWriter;
 import org.twelve.meridian.python.PythonInferencer;
 import org.twelve.meridian.python.TypeAnnotationGenerator;
@@ -104,9 +103,8 @@ public final class MeridianCli {
     }
 
     private static int writeStub(File input, Path out) throws IOException {
-        PythonInferencer inferencer = new PythonInferencer();
-        AST ast = inferencer.inferFile(input);
-        String stub = new TypeAnnotationGenerator().generate(ast);
+        PythonInferencer.InferResult inferred = new PythonInferencer().inferFileDetailed(input);
+        String stub = new TypeAnnotationGenerator().generate(inferred.inference());
         return emit(stub, out);
     }
 

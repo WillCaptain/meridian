@@ -15,7 +15,7 @@ import java.util.Map;
  * <ul>
  *   <li>{@link PythonAnnotationWriter} — production annotations</li>
  *   <li>{@link TypeEvalPySiteExporter} — benchmark site serialization</li>
- *   <li>{@link TypeAnnotationGenerator} — stubs (via GCP AST)</li>
+ *   <li>{@link TypeAnnotationGenerator} — stubs</li>
  * </ul>
  */
 public final class PythonInferenceResult {
@@ -28,7 +28,7 @@ public final class PythonInferenceResult {
     /** callee bare/attr name → per-arg observed types (union across call sites). */
     private final Map<String, List<List<String>>> callSiteArgTypes;
 
-    /** container element path → types, e.g. {@code d['foo']} → [int], {@code xs[0]} → [str]. */
+    /** container element path → types, e.g. {@code d['foo']} → [int]. */
     private final Map<String, List<String>> containerElements;
 
     /** binder → type when the binder is invoked (callable slots). */
@@ -36,6 +36,15 @@ public final class PythonInferenceResult {
 
     /** function bare/qname → param name → types refined from call sites. */
     private final Map<String, Map<String, List<String>>> refinedParams;
+
+    /** {@code Class.method} → return types (receiver-sensitive). */
+    private final Map<String, List<String>> methodReturns;
+
+    /** assignment target → type of a call result ({@code y = f()}, {@code z = obj.m()}). */
+    private final Map<String, List<String>> callResults;
+
+    /** variable → nominal class from {@code x = Class(...)}. */
+    private final Map<String, String> receiverTypes;
 
     public PythonInferenceResult(
             AST gcpAst,
@@ -45,7 +54,10 @@ public final class PythonInferenceResult {
             Map<String, List<List<String>>> callSiteArgTypes,
             Map<String, List<String>> containerElements,
             Map<String, List<String>> callReturns,
-            Map<String, Map<String, List<String>>> refinedParams) {
+            Map<String, Map<String, List<String>>> refinedParams,
+            Map<String, List<String>> methodReturns,
+            Map<String, List<String>> callResults,
+            Map<String, String> receiverTypes) {
         this.gcpAst = gcpAst;
         this.pyAst = pyAst;
         this.fileName = fileName;
@@ -54,6 +66,9 @@ public final class PythonInferenceResult {
         this.containerElements = Map.copyOf(containerElements);
         this.callReturns = Map.copyOf(callReturns);
         this.refinedParams = copyParams(refinedParams);
+        this.methodReturns = Map.copyOf(methodReturns);
+        this.callResults = Map.copyOf(callResults);
+        this.receiverTypes = Map.copyOf(receiverTypes);
     }
 
     public AST gcpAst() {
@@ -88,9 +103,20 @@ public final class PythonInferenceResult {
         return refinedParams;
     }
 
+    public Map<String, List<String>> methodReturns() {
+        return methodReturns;
+    }
+
+    public Map<String, List<String>> callResults() {
+        return callResults;
+    }
+
+    public Map<String, String> receiverTypes() {
+        return receiverTypes;
+    }
+
     /**
      * Annotation-writer keys: {@code func#param} → first Meridian type token.
-     * Only emits when call-site evidence produced a non-empty type.
      */
     public Map<String, String> annotationHints() {
         Map<String, String> out = new LinkedHashMap<>();
@@ -100,6 +126,10 @@ public final class PythonInferenceResult {
                 if (types == null || types.isEmpty()) continue;
                 out.put(fn.getKey() + "#" + p.getKey(), types.get(0));
             }
+        }
+        for (Map.Entry<String, List<String>> e : callResults.entrySet()) {
+            if (e.getValue() == null || e.getValue().isEmpty()) continue;
+            out.putIfAbsent(e.getKey(), e.getValue().get(0));
         }
         return out;
     }
