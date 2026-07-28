@@ -1,0 +1,70 @@
+{
+  "suite": "l3-more-itertools",
+  "title": "L3 more-itertools multi-module package",
+  "product": "meridian",
+  "claim_boundary": "Meridian annotate→mypyc product eval; not GCP TOPLAS / Outline-port SOTA",
+  "captured_at": "20260728T023548Z",
+  "payload": {
+  "corpus" : "l3-more-itertools",
+  "claim_boundary" : "Multi-module import graph; adapted list hot paths; not full upstream more.py",
+  "modules" : [ "mi_numeric", "mi_recipes", "mi_facade" ],
+  "primary_module" : "mi_recipes",
+  "funcs_total" : 10,
+  "param_coverage" : 0.957,
+  "return_coverage" : 0.8,
+  "mypyc_compile_ok" : true,
+  "correct_rate" : 1.0,
+  "avg_speedup_vs_native" : 3.628,
+  "gates_pass" : true,
+  "partially_unannotated_funcs" : [ "mi_numeric.mul_acc", "mi_recipes.dotproduct", "mi_recipes.recipe_tabulate" ],
+  "rows" : [ {
+    "func" : "quantify([0, 1, 0, 1, 1, 0, 1, 1, 0, 1], 10)",
+    "correct" : true,
+    "native_ns" : 773.9,
+    "meridian_ns" : 119.6,
+    "speedup_vs_native" : 6.47
+  }, {
+    "func" : "take_sum(5, [1, 2, 3, 4, 5, 6, 7, 8])",
+    "correct" : true,
+    "native_ns" : 253.2,
+    "meridian_ns" : 72.4,
+    "speedup_vs_native" : 3.5
+  }, {
+    "func" : "all_equal([3, 3, 3, 3, 3], 5)",
+    "correct" : true,
+    "native_ns" : 238.5,
+    "meridian_ns" : 59.4,
+    "speedup_vs_native" : 4.02
+  }, {
+    "func" : "ncycles_sum([1, 2, 3, 4, 5, 6, 7, 8], 3, 8)",
+    "correct" : true,
+    "native_ns" : 944.9,
+    "meridian_ns" : 186.7,
+    "speedup_vs_native" : 5.06
+  }, {
+    "func" : "pairwise_product_sum([1, 2, 3, 4, 5, 6, 7, 8], 8)",
+    "correct" : true,
+    "native_ns" : 384.4,
+    "meridian_ns" : 111.6,
+    "speedup_vs_native" : 3.44
+  }, {
+    "func" : "first_true_index([0, 0, 0, 0, 0, 0, 7], 7)",
+    "correct" : true,
+    "native_ns" : 263.0,
+    "meridian_ns" : 66.9,
+    "speedup_vs_native" : 3.93
+  }, {
+    "func" : "dotproduct([1.0, 2.0, 3.0, 4.0, 5.0], [0.5, 0.5, 0.5, 0.5, 0.5], 5)",
+    "correct" : true,
+    "native_ns" : 342.9,
+    "meridian_ns" : 260.6,
+    "speedup_vs_native" : 1.32
+  }, {
+    "func" : "recipe_tabulate(200, 1)",
+    "correct" : true,
+    "native_ns" : 7923.6,
+    "meridian_ns" : 6208.2,
+    "speedup_vs_native" : 1.28
+  } ]
+}
+}

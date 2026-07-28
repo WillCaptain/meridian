@@ -120,39 +120,53 @@ def main():
         print(json.dumps({"error": f"invalid cases_json: {e}"}), file=sys.stderr)
         sys.exit(1)
 
-    native_py = os.path.join(work_dir, native_mod + ".py")
-    meridian_py = os.path.join(work_dir, meridian_mod + ".py")
+    # L3 multi-module layout: work_dir/native/*.py and work_dir/meridian/*.{py,so}
+    native_root = os.path.join(work_dir, "native")
+    meridian_root = os.path.join(work_dir, "meridian")
+    if not (os.path.isdir(native_root) and os.path.isdir(meridian_root)):
+        native_root = work_dir
+        meridian_root = work_dir
+
+    native_py = os.path.join(native_root, native_mod + ".py")
+    meridian_py = os.path.join(meridian_root, meridian_mod + ".py")
     for path, label in [(native_py, "native .py"), (meridian_py, "meridian .py")]:
         if not os.path.isfile(path):
             print(json.dumps({"error": f"{label} not found: {path}"}), file=sys.stderr)
             sys.exit(1)
 
-    meridian_so = _find_so(work_dir, meridian_mod)
+    meridian_so = _find_so(meridian_root, meridian_mod)
     if meridian_so is None:
         print(json.dumps({"error":
-              f"no .so for meridian module '{meridian_mod}' in {work_dir}"}),
+              f"no .so for meridian module '{meridian_mod}' in {meridian_root}"}),
               file=sys.stderr)
         sys.exit(1)
 
     # Optional control: mypyc on naked source (same module name as native).
-    bare_so = _find_so(work_dir, native_mod)
+    bare_so = _find_so(meridian_root, native_mod) if native_root == meridian_root else None
     # If native_mod == meridian_mod, bare_so would collide — treat as no bare lane.
     if native_mod == meridian_mod:
         bare_so = None
 
     helper_prefixes = []
-    for name in os.listdir(work_dir):
+    for name in os.listdir(meridian_root):
         if not _is_native_ext(name):
             continue
-        if name.startswith(native_mod) or name.startswith(meridian_mod):
+        if name.startswith(native_mod + ".") or name.startswith(meridian_mod + ".") \
+                or name == native_mod + ".so" or name == meridian_mod + ".so" \
+                or name == native_mod + ".pyd" or name == meridian_mod + ".pyd":
             continue
+        if name.startswith(native_mod) or name.startswith(meridian_mod):
+            # still skip exact module prefixes via _so_module_match semantics later
+            pass
         helper_prefixes.append(name.split(".", 1)[0])
     seen = set()
-    helper_prefixes = [p for p in helper_prefixes if not (p in seen or seen.add(p))]
+    helper_prefixes = [p for p in helper_prefixes
+                       if p not in (native_mod, meridian_mod)
+                       and not (p in seen or seen.add(p))]
 
-    py_dir = _sandbox(work_dir, so_prefixes=None)
-    bare_dir = _sandbox(work_dir, so_prefixes=[native_mod]) if bare_so else None
-    ann_dir = _sandbox(work_dir, so_prefixes=[meridian_mod] + helper_prefixes)
+    py_dir = _sandbox(native_root, so_prefixes=None)
+    bare_dir = _sandbox(meridian_root, so_prefixes=[native_mod]) if bare_so else None
+    ann_dir = _sandbox(meridian_root, so_prefixes=[meridian_mod] + helper_prefixes)
 
     failed = False
     try:

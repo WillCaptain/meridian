@@ -13,6 +13,7 @@ Artifacts for a future **Meridian → dynamic languages / mypyc** paper.
 | `converter-e2e-sample` | `ConverterE2ESampleArchiveTest` | curated subset for quicker paper refresh |
 | `mini-project-sample` | `MiniProjectCompileSampleTest` | real-shaped `--calls` prune/rewrite gate |
 | `l2-more-itertools` | `ProductionCorpusProofTest` | L2 third-party-shaped recipes: coverage → compile → correctness → speedup |
+| `l3-more-itertools` | `ProductionCorpusL3ProofTest` | L3 multi-module import graph (facade→recipes→numeric) |
 
 ## Files
 
@@ -28,7 +29,7 @@ JSON envelope fields: `suite`, `title`, `product`, `claim_boundary`, `captured_a
 From repo root (mypyc + CPython required):
 
 ```bash
-mvn -pl meridian-python -Dtest=Table1BenchmarkTest,TheAlgorithmsBenchmarkTest,ConverterE2ESampleArchiveTest,MiniProjectCompileSampleTest,ProductionCorpusProofTest test
+mvn -pl meridian-python -Dtest=Table1BenchmarkTest,TheAlgorithmsBenchmarkTest,ConverterE2ESampleArchiveTest,MiniProjectCompileSampleTest,ProductionCorpusProofTest,ProductionCorpusL3ProofTest test
 # full converter matrix (slow):
 mvn -pl meridian-python -Dtest=ConverterE2ETest test
 # CLI four-gate scan (optional --archive writes docs/meridian-eval/):
@@ -45,6 +46,9 @@ Commit updated `*-latest.*` (and optional stamped copies) with the code change t
 | L0 | Playground micro demos | online at 12th.ai/playground/python |
 | L1 | TheAlgorithms / table1 / converters | archived here |
 | L2 | Third-party-shaped subset (`l2-more-itertools`) | `ProductionCorpusProofTest` |
-| L3+ | Full package import graphs / production hot paths | not yet |
+| L3 | Multi-module import graph (`l3-more-itertools`) | `ProductionCorpusL3ProofTest` |
+| L4 | Full upstream package / real production hot paths | not yet |
 
 L2 claim boundary: **selected pure-Python recipes with usage snippets**, not a pip-installed whole package.
+
+L3 claim boundary: **facade → recipes → numeric** import graph with adapted list hot paths; not the full upstream `more.py`.

@@ -8,6 +8,7 @@ import org.twelve.meridian.python.TypeAnnotationGenerator;
 import org.twelve.meridian.python.TypeEvalPySiteExporter;
 import org.twelve.meridian.python.eval.CorpusProofRunner;
 import org.twelve.meridian.python.eval.EvalResultArchive;
+import org.twelve.meridian.python.eval.PackageCorpusProofRunner;
 
 import java.io.File;
 import java.io.IOException;
@@ -303,9 +304,30 @@ public final class MeridianCli {
             return 2;
         }
         try {
-            CorpusProofRunner.Spec spec = CorpusProofRunner.loadDir(dir);
+            boolean isPackage = Files.isRegularFile(dir.resolve("manifest.json"))
+                    && Files.readString(dir.resolve("manifest.json"), StandardCharsets.UTF_8)
+                    .contains("\"package_dir\"");
             Path work = Files.createTempDirectory("meridian_corpus_cli_");
-            CorpusProofRunner.Report report = new CorpusProofRunner().evaluate(spec, work);
+            final CorpusProofRunner.Report report;
+            final double minCov;
+            final double minSp;
+            if (isPackage) {
+                PackageCorpusProofRunner.PackageSpec spec = PackageCorpusProofRunner.loadDir(dir);
+                report = new PackageCorpusProofRunner().evaluate(spec, work);
+                minCov = spec.minParamCoverage();
+                minSp = spec.minAvgSpeedup();
+                if (archive) {
+                    PackageCorpusProofRunner.archive(report, spec);
+                }
+            } else {
+                CorpusProofRunner.Spec spec = CorpusProofRunner.loadDir(dir);
+                report = new CorpusProofRunner().evaluate(spec, work);
+                minCov = spec.minParamCoverage();
+                minSp = spec.minAvgSpeedup();
+                if (archive) {
+                    CorpusProofRunner.archive(report, spec);
+                }
+            }
             System.out.printf(Locale.US,
                     "corpus=%s param_coverage=%.1f%% return_coverage=%.1f%% compile=%s correct=%.0f%% avg_speedup=%.2fx gates=%s%n",
                     report.corpusId(),
@@ -314,7 +336,7 @@ public final class MeridianCli {
                     report.compileOk() ? "ok" : "FAIL",
                     100 * report.correctRate(),
                     report.avgSpeedup(),
-                    report.gatesPass(spec.minParamCoverage(), spec.minAvgSpeedup()));
+                    report.gatesPass(minCov, minSp));
             if (!report.compileOk()) {
                 System.err.println(report.compileError());
             }
@@ -323,10 +345,9 @@ public final class MeridianCli {
                         r.func(), r.correct(), r.speedupVsNative());
             }
             if (archive) {
-                CorpusProofRunner.archive(report, spec);
                 System.err.println("Archived under " + EvalResultArchive.defaultRoot());
             }
-            return report.gatesPass(spec.minParamCoverage(), spec.minAvgSpeedup()) ? 0 : 1;
+            return report.gatesPass(minCov, minSp) ? 0 : 1;
         } catch (IOException e) {
             System.err.println("I/O error: " + e.getMessage());
             return 1;

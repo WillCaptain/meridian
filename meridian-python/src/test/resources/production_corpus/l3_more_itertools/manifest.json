@@ -1,0 +1,14 @@
+{
+  "corpus_id": "l3-more-itertools",
+  "title": "L3 more-itertools multi-module package",
+  "claim_boundary": "Multi-module import graph (facade→recipes→numeric); adapted list hot paths; not full upstream more.py",
+  "primary_module": "mi_recipes",
+  "package_dir": "package",
+  "modules": ["mi_numeric", "mi_recipes", "mi_facade"],
+  "gates": {
+    "min_param_coverage": 0.70,
+    "min_compile_success": 1.0,
+    "min_correct_rate": 1.0,
+    "min_avg_speedup_vs_native": 2.0
+  }
+}
