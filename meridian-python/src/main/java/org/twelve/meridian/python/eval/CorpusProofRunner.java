@@ -34,8 +34,24 @@ public final class CorpusProofRunner {
             String benchUsage,
             String benchCasesJson,
             double minParamCoverage,
-            double minAvgSpeedup
-    ) {}
+            double minAvgSpeedup,
+            AnnotationPolicy compilePolicy
+    ) {
+        public Spec(
+                String corpusId,
+                String title,
+                String moduleName,
+                String librarySource,
+                String coverageUsage,
+                String benchUsage,
+                String benchCasesJson,
+                double minParamCoverage,
+                double minAvgSpeedup) {
+            this(corpusId, title, moduleName, librarySource, coverageUsage, benchUsage,
+                    benchCasesJson, minParamCoverage, minAvgSpeedup,
+                    AnnotationPolicy.ALL_CONCRETE);
+        }
+    }
 
     public record BenchRow(
             String func,
@@ -81,12 +97,15 @@ public final class CorpusProofRunner {
         AnnotationCoverage.Stats cov = AnnotationCoverage.measure(annotatedForCoverage);
 
         // Gates 2–4 — product compile path + native bench.
+        AnnotationPolicy compilePolicy = spec.compilePolicy() == null
+                ? AnnotationPolicy.ALL_CONCRETE
+                : spec.compilePolicy();
         CompilePipeline.Outcome outcome = pipeline.run(new CompilePipeline.Request(
                 spec.librarySource(),
                 spec.moduleName(),
                 spec.benchUsage(),
                 true,
-                AnnotationPolicy.ALL_CONCRETE,
+                compilePolicy,
                 workDir,
                 spec.benchCasesJson()
         ));

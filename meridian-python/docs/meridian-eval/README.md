@@ -14,6 +14,7 @@ Artifacts for a future **Meridian → dynamic languages / mypyc** paper.
 | `mini-project-sample` | `MiniProjectCompileSampleTest` | real-shaped `--calls` prune/rewrite gate |
 | `l2-more-itertools` | `ProductionCorpusProofTest` | L2 third-party-shaped recipes: coverage → compile → correctness → speedup |
 | `l3-more-itertools` | `ProductionCorpusL3ProofTest` | L3 multi-module import graph (facade→recipes→numeric) |
+| `l4-more-itertools-upstream` | `ProductionCorpusL4ProofTest` | L4 upstream more-itertools recipe bodies (selected) |
 
 ## Files
 
@@ -29,7 +30,7 @@ JSON envelope fields: `suite`, `title`, `product`, `claim_boundary`, `captured_a
 From repo root (mypyc + CPython required):
 
 ```bash
-mvn -pl meridian-python -Dtest=Table1BenchmarkTest,TheAlgorithmsBenchmarkTest,ConverterE2ESampleArchiveTest,MiniProjectCompileSampleTest,ProductionCorpusProofTest,ProductionCorpusL3ProofTest test
+mvn -pl meridian-python -Dtest=Table1BenchmarkTest,TheAlgorithmsBenchmarkTest,ConverterE2ESampleArchiveTest,MiniProjectCompileSampleTest,ProductionCorpusProofTest,ProductionCorpusL3ProofTest,ProductionCorpusL4ProofTest test
 # full converter matrix (slow):
 mvn -pl meridian-python -Dtest=ConverterE2ETest test
 # CLI four-gate scan (optional --archive writes docs/meridian-eval/):
@@ -47,8 +48,11 @@ Commit updated `*-latest.*` (and optional stamped copies) with the code change t
 | L1 | TheAlgorithms / table1 / converters | archived here |
 | L2 | Third-party-shaped subset (`l2-more-itertools`) | `ProductionCorpusProofTest` |
 | L3 | Multi-module import graph (`l3-more-itertools`) | `ProductionCorpusL3ProofTest` |
-| L4 | Full upstream package / real production hot paths | not yet |
+| L4 | Upstream recipe bodies (`l4-more-itertools-upstream`) | `ProductionCorpusL4ProofTest` |
+| L5 | Full upstream package / real production hot paths | not yet |
 
 L2 claim boundary: **selected pure-Python recipes with usage snippets**, not a pip-installed whole package.
 
 L3 claim boundary: **facade → recipes → numeric** import graph with adapted list hot paths; not the full upstream `more.py`.
+
+L4 claim boundary: **upstream more-itertools v10.7.0 algorithm bodies (selected)**; may strip known-wrong `-> list[…]` returns before mypyc; not full `more.py`.

@@ -1,0 +1,44 @@
+{
+  "suite": "l4-more-itertools-upstream",
+  "title": "L4 upstream more-itertools recipe bodies",
+  "product": "meridian",
+  "claim_boundary": "Meridian annotate→mypyc product eval; not GCP TOPLAS / Outline-port SOTA",
+  "captured_at": "20260728T034702Z",
+  "payload": {
+  "corpus" : "l4-more-itertools-upstream",
+  "claim_boundary" : "Upstream more-itertools v10.7.0 bodies (selected); not full more.py",
+  "funcs_total" : 8,
+  "param_coverage" : 0.857,
+  "return_coverage" : 0.625,
+  "mypyc_compile_ok" : true,
+  "correct_rate" : 1.0,
+  "avg_speedup_vs_native" : 2.243,
+  "gates_pass" : true,
+  "return_repair" : "stripped erroneous -> list[...] on dotproduct*",
+  "rows" : [ {
+    "func" : "take_sum(5, [1, 2, 3, 4, 5, 6, 7, 8])",
+    "correct" : true,
+    "native_ns" : 566.3,
+    "meridian_ns" : 326.8,
+    "speedup_vs_native" : 1.73
+  }, {
+    "func" : "nth_item([1, 2, 3, 4, 5, 6, 7, 8], 3)",
+    "correct" : true,
+    "native_ns" : 222.0,
+    "meridian_ns" : 187.9,
+    "speedup_vs_native" : 1.18
+  }, {
+    "func" : "quantify_bool([True, False, True, True])",
+    "correct" : true,
+    "native_ns" : 209.7,
+    "meridian_ns" : 49.0,
+    "speedup_vs_native" : 4.28
+  }, {
+    "func" : "dotproduct_seq([10.0, 15.0, 12.0], [0.65, 0.8, 1.25])",
+    "correct" : true,
+    "native_ns" : 386.2,
+    "meridian_ns" : 217.5,
+    "speedup_vs_native" : 1.78
+  } ]
+}
+}

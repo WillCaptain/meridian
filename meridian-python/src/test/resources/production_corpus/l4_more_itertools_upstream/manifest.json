@@ -1,0 +1,12 @@
+{
+  "corpus_id": "l4-more-itertools-upstream",
+  "title": "L4 upstream more-itertools recipe bodies",
+  "claim_boundary": "Upstream more-itertools v10.7.0 bodies (selected); not full more.py",
+  "module_name": "upstream_kit",
+  "gates": {
+    "min_param_coverage": 0.40,
+    "min_compile_success": 1.0,
+    "min_correct_rate": 1.0,
+    "min_avg_speedup_vs_native": 1.05
+  }
+}
