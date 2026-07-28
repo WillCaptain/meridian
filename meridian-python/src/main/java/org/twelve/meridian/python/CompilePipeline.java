@@ -8,11 +8,15 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Product compile path: naked Python → Meridian annotate (/specialize) → mypyc
- * → optional native eval check.
+ * Product <em>compile</em> surface: naked Python → annotate/specialize →
+ * tree-shake unreachable defs → mypyc → optional native eval check.
+ *
+ * <p>IDE hover facts (including {@code Union}/{@code Optional}) live on
+ * {@link IdeTypeSurface} — not this pipeline.
  *
  * <p>With {@code benchCasesJson}, after compile:
  * <ol>
@@ -39,7 +43,8 @@ public final class CompilePipeline {
             String benchJson,            // nullable
             boolean benchOk,             // true when no bench, or all cases correct
             boolean specialized,
-            Map<String, FunctionSpecializer.FuncSpecializations> plan
+            Map<String, FunctionSpecializer.FuncSpecializations> plan,
+            Set<String> prunedFunctions
     ) {}
 
     private final PythonInferencer inferencer = new PythonInferencer();
@@ -67,6 +72,7 @@ public final class CompilePipeline {
         String annotated;
         Map<String, FunctionSpecializer.FuncSpecializations> plan = Map.of();
         boolean specialized = false;
+        Set<String> pruned = Set.of();
 
         String usage = req.usageSource();
         if (usage != null && !usage.isBlank()) {
@@ -84,7 +90,13 @@ public final class CompilePipeline {
             } else {
                 annotated = writer.annotate(req.librarySource(), ctx);
             }
+            // Compile surface: drop defs never reached from usage (keep callees).
+            CompileSourcePruner.Result shake =
+                    CompileSourcePruner.prune(annotated, ctx.libraryAst(), ctx.usageAst());
+            annotated = shake.source();
+            pruned = shake.removed();
         } else {
+            // No usage → no tree-shake evidence; annotate whole module (SAFE_PARTIAL).
             PythonInferenceResult inferred = inferencer.inferDetailed(req.librarySource());
             annotated = writer.annotate(req.librarySource(), inferred);
         }
@@ -104,7 +116,8 @@ public final class CompilePipeline {
             benchOk = bench.ok();
         }
 
-        return new Outcome(annotated, annFile, compiled, benchJson, benchOk, specialized, plan);
+        return new Outcome(annotated, annFile, compiled, benchJson, benchOk,
+                specialized, plan, pruned);
     }
 
     private record BenchRun(String json, boolean ok) {}

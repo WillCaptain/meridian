@@ -1,0 +1,16 @@
+{
+  "suite": "converter-e2e-sample",
+  "title": "Converter E2E sample — Meridian CompilePipeline",
+  "product": "meridian",
+  "claim_boundary": "Meridian annotate→mypyc product eval; not GCP TOPLAS / Outline-port SOTA",
+  "captured_at": "20260728T003400Z",
+  "payload": {
+  "note": "Curated subset via CompilePipeline (product path)",
+  "rows": [
+  {"converter": "aug_assign", "correct": true, "speedup_vs_native": 27.09},
+  {"converter": "listcomp", "correct": true, "speedup_vs_native": 1.66},
+  {"converter": "for_loop_var", "correct": true, "speedup_vs_native": 16.32},
+  {"converter": "ifexp", "correct": true, "speedup_vs_native": 20.23}
+]
+}
+}

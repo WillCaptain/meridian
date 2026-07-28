@@ -1,0 +1,28 @@
+{
+  "suite": "thealgorithms-maths",
+  "title": "TheAlgorithms maths — Meridian vs native CPython",
+  "product": "meridian",
+  "claim_boundary": "Meridian annotate→mypyc product eval; not GCP TOPLAS / Outline-port SOTA",
+  "captured_at": "20260728T003723Z",
+  "payload": {
+  "avg_speedup_bare": 1.5057,
+  "avg_speedup_meridian": 17.1957,
+  "prime_factors_count_n_int": true,
+  "rows": [
+  {"func": "gcd_euclidean(1071, 462)", "correct": true, "native_ns": 148.6, "mypyc_bare_ns": 91.5, "meridian_ns": 42.7, "speedup_bare": 1.62, "speedup_vs_native": 3.48},
+  {"func": "gcd_euclidean(123456789, 987654)", "correct": true, "native_ns": 179.8, "mypyc_bare_ns": 98.2, "meridian_ns": 43.2, "speedup_bare": 1.83, "speedup_vs_native": 4.16},
+  {"func": "prime_factors_count(9699690)", "correct": true, "native_ns": 1222.9, "mypyc_bare_ns": 866.9, "meridian_ns": 76.5, "speedup_bare": 1.41, "speedup_vs_native": 15.99},
+  {"func": "prime_factors_count(1000000007)", "correct": true, "native_ns": 1734019.2, "mypyc_bare_ns": 1487155.4, "meridian_ns": 67041.7, "speedup_bare": 1.17, "speedup_vs_native": 25.86},
+  {"func": "euler_totient(100)", "correct": true, "native_ns": 12895.5, "mypyc_bare_ns": 7281.7, "meridian_ns": 540.2, "speedup_bare": 1.77, "speedup_vs_native": 23.87},
+  {"func": "euler_totient(200)", "correct": true, "native_ns": 28152.1, "mypyc_bare_ns": 15775.7, "meridian_ns": 1213.5, "speedup_bare": 1.78, "speedup_vs_native": 23.2},
+  {"func": "sieve_count(10000)", "correct": true, "native_ns": 689550.0, "mypyc_bare_ns": 696315.8, "meridian_ns": 56692.9, "speedup_bare": 0.99, "speedup_vs_native": 12.16},
+  {"func": "sieve_count(50000)", "correct": true, "native_ns": 3629484.1, "mypyc_bare_ns": 3685053.3, "meridian_ns": 289535.7, "speedup_bare": 0.98, "speedup_vs_native": 12.54},
+  {"func": "collatz_len(871)", "correct": true, "native_ns": 12768.5, "mypyc_bare_ns": 7683.6, "meridian_ns": 343.4, "speedup_bare": 1.66, "speedup_vs_native": 37.18},
+  {"func": "collatz_len(77031)", "correct": true, "native_ns": 24336.9, "mypyc_bare_ns": 15088.3, "meridian_ns": 625.0, "speedup_bare": 1.61, "speedup_vs_native": 38.94},
+  {"func": "pow_mod(2, 1000, 1000007)", "correct": true, "native_ns": 1045.2, "mypyc_bare_ns": 699.2, "meridian_ns": 92.1, "speedup_bare": 1.49, "speedup_vs_native": 11.35},
+  {"func": "pow_mod(7, 10000, 999999937)", "correct": true, "native_ns": 1628.9, "mypyc_bare_ns": 1088.1, "meridian_ns": 122.4, "speedup_bare": 1.5, "speedup_vs_native": 13.3},
+  {"func": "sum_of_digits(123456789)", "correct": true, "native_ns": 509.4, "mypyc_bare_ns": 302.4, "meridian_ns": 54.8, "speedup_bare": 1.68, "speedup_vs_native": 9.29},
+  {"func": "sum_of_digits(999999999999)", "correct": true, "native_ns": 682.8, "mypyc_bare_ns": 430.3, "meridian_ns": 72.5, "speedup_bare": 1.59, "speedup_vs_native": 9.42}
+]
+}
+}

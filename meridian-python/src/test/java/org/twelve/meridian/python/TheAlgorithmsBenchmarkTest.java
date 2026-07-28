@@ -11,13 +11,18 @@ import java.nio.file.*;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.stream.Collectors;
+import java.util.Locale;
+
+import org.twelve.meridian.python.eval.EvalResultArchive;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Real-world benchmark: GCP-Python on functions extracted verbatim from
- * TheAlgorithms/Python (https://github.com/TheAlgorithms/Python),
- * the most-starred Python algorithms repository on GitHub (≈200k stars).
+ * Real-world benchmark: Meridian annotate→mypyc on functions extracted from
+ * TheAlgorithms/Python (https://github.com/TheAlgorithms/Python).
+ *
+ * <p>Results are archived under {@code docs/meridian-eval/} for a future
+ * Meridian product paper (not a GCP TOPLAS / Outline-port claim).
  *
  * <p><b>Source mapping:</b>
  * <ul>
@@ -250,6 +255,8 @@ class TheAlgorithmsBenchmarkTest {
                 "GCP must inject some annotation for 'b' in gcd_euclidean");
 
         assertIntAnnotated(annotated, "prime_factors_count", "n");
+        assertFalse(annotated.contains("n: Union[int, float]"),
+                "prime_factors_count must not widen n to Union[int, float]; got:\n" + annotated);
         assertIntAnnotated(annotated, "euler_totient",    "n");
         assertTrue(annotated.contains("limit: int"),
                 "GCP must annotate 'limit: int' in sieve_count");
@@ -383,6 +390,47 @@ class TheAlgorithmsBenchmarkTest {
                 String.format("Real-world GCP speedup must be ≥ 3×; got %.2f×", avgGcp));
         assertTrue(avgGcp > avgBare * 1.5,
                 String.format("GCP (%.2f×) must substantially outperform bare (%.2f×)", avgGcp, avgBare));
+
+        archiveTheAlgorithms(rows, avgBare, avgGcp, annotated);
+    }
+
+    private static void archiveTheAlgorithms(
+            List<BenchRow> rows, double avgBare, double avgGcp, String annotated) throws Exception {
+        List<Map<String, Object>> payloadRows = new ArrayList<>();
+        for (BenchRow r : rows) {
+            payloadRows.add(EvalResultArchive.row(
+                    r.func(), r.correct(),
+                    r.cpythonNs(), r.mypycBareNs(), r.mypycGcpNs(),
+                    r.speedupBare(), r.speedupGcp()));
+        }
+        String json = """
+                {
+                  "avg_speedup_bare": %s,
+                  "avg_speedup_meridian": %s,
+                  "prime_factors_count_n_int": %s,
+                  "rows": %s
+                }
+                """.formatted(
+                String.format(Locale.US, "%.4f", avgBare),
+                String.format(Locale.US, "%.4f", avgGcp),
+                annotated.contains("def prime_factors_count(n: int)")
+                        || annotated.contains("n: int"),
+                EvalResultArchive.rowsToJson(payloadRows));
+        StringBuilder md = new StringBuilder();
+        md.append("## Summary\n\n");
+        md.append(String.format(Locale.US,
+                "- avg bare×: **%.2f**\n- avg Meridian×: **%.2f**\n\n", avgBare, avgGcp));
+        md.append("| Function | correct | bare× | Meridian× |\n");
+        md.append("|----------|---------|-------|----------|\n");
+        for (BenchRow r : rows) {
+            md.append(String.format(Locale.US, "| `%s` | %s | %.2f | %.2f |\n",
+                    r.func(), r.correct(), r.speedupBare(), r.speedupGcp()));
+        }
+        Path written = EvalResultArchive.writeSuite(
+                "thealgorithms-maths",
+                "TheAlgorithms maths — Meridian vs native CPython",
+                json, md.toString());
+        System.out.println("  Archived → " + written.toAbsolutePath());
     }
 
     // ── assertion helpers ─────────────────────────────────────────────────────

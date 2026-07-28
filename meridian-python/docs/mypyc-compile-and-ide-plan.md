@@ -1,31 +1,81 @@
 # Meridian Plan — mypyc compile focus + parked IDE
 
-> Status: planning (2026-07-28)  
-> Active focus: Meridian annotate → mypyc → performance  
-> Parked: IDE / LSP realtime typecheck
+> Status: active (2026-07-28)  
+> Active focus: Meridian annotate → specialize → tree-shake → mypyc → performance  
+> Parked: IDE / LSP shell (API surface exists; no LSP host yet)
 
 ## Product stance
 
 We are not aiming to “support all of Python”. We extract as much reliable type
-information as we can, annotate only when sound for mypyc, and leave gaps
-unannotated rather than inventing types.
+information as we can. **IDE** and **compile** consume the same inference with
+different policies.
 
 ---
 
-## Part A — IDE support (parked; do later)
+## Dual surfaces (IDE vs compile)
+
+Same `infer(lib [, usage])`, two consumers:
+
+```text
+infer(lib [, usage])
+  ├─ IDE surface  (IdeTypeSurface)     — hover / diagnostics (parked host)
+  │     keep Union / Optional / wide Outline bindings
+  │
+  └─ Compile surface (CompilePipeline) — mypyc input only
+        monomorphize from concrete call-site tuples
+        tree-shake defs never reached from usage
+```
+
+### IDE surface
+
+| Rule | Detail |
+|------|--------|
+| Keep Union / Optional | Definition-width types are useful for hover (`x: int \| str`, `Optional[T]`) |
+| No AnnotationPolicy drop | Do not apply `SAFE_PARTIAL` / compile narrowing |
+| Param display | Use full `outlineToTypeStr` (not compile’s `outlineToTypeStrForParam`) |
+| API | `IdeTypeSurface.hoverTypes(lib, usage?)` → `func#param` / `func#return` map |
+| Host | LSP / editor still parked (I1–I5); call the API when resumed |
+
+### Compile surface
+
+| Situation | Action |
+|-----------|--------|
+| Only `f(10)` | Emit concrete `f(x: int) -> …` (or `_f_int` under poly dispatch) |
+| Also `f("str")` | Clone per concrete tuple + `isinstance` dispatcher at `f` |
+| Function never called from usage | **Remove from mypyc input** (`CompileSourcePruner`) |
+| Called only as callee of a kept function | Keep (reachability closure) |
+| No usage / no evidence | Do **not** tree-shake; annotate whole module with `SAFE_PARTIAL` |
+| Never | Feed definition-width `Union` to mypyc as a substitute for monomorphization |
+
+Example (Outline spirit):
+
+```text
+let f = x -> x + 1;     # IDE may show x: String|Number
+f(10);                  # compile → f(x: int) / _f_int
+f("str");               # compile → additional _f_str (+ dispatcher)
+# g never called        # compile → drop g from .py fed to mypyc
+```
+
+Tree-shake deletes from the **compile artifact**, not from the user’s project
+sources. Incomplete usage can over-prune; callers should pass entry/usage that
+covers the hot path.
+
+---
+
+## Part A — IDE support (parked host; API ready)
 
 Goal: realtime developer feedback without forcing full annotate+compile.
 
 | # | Work | Done when |
 |---|------|-----------|
-| I1 | Buffer API over `PythonInferenceResult` (source string + optional usage) | in-memory hover facts |
+| I0 | `IdeTypeSurface` (full Union/Optional hover map) | ✅ API in tree |
+| I1 | Buffer API over `PythonInferenceResult` + `IdeTypeSurface` | in-memory hover facts |
 | I2 | Thin LSP (or VS Code extension calling Meridian) | hover + `publishDiagnostics` |
 | I3 | Map constraint conflicts → diagnostics (not only inferred types) | clear error ranges |
 | I4 | Cache / debounce / cancel stale jobs | interactive latency |
 | I5 | Real-project smoke (cross-module, false-positive budget) | usable daily loop |
 
-**Guardrail:** do not block mypyc compile productization on IDE. CLI + E2E remain
-the proof surface until Part A is resumed.
+**Guardrail:** do not block mypyc compile productization on IDE host work.
 
 ---
 
@@ -35,7 +85,7 @@ the proof surface until Part A is resumed.
 
 ```text
 a) meridian compile
-   naked .py (+ optional usage) → Meridian annotate/specialize → mypyc
+   naked .py (+ usage) → annotate/specialize → prune unreachable → mypyc
         ↓
 b) check eval result vs native
    Meridian(.so) return value == CPython(naked) return value
@@ -56,15 +106,17 @@ meridian compile lib.py --calls-inline 'sum_range(1000)' \
 | Piece | Status |
 |-------|--------|
 | `infer` / `stub` / `sites` CLI | ✅ |
-| `inferWithContextDetailed` + annotate | ✅ (tests) |
-| `MypycRunner.compile` / `inferAndCompile` | ✅ API; ❌ no product CLI |
-| `ConverterE2ETest` + `generic_benchmark.py` | ✅ speedup gates |
-| `FunctionSpecializer` monomorphization | ✅ clones; ❌ no call-site rewrite / CLI |
-| Annotation first-wins on conflicting call sites | ⚠️ wrong for multi-type `f` |
+| `inferWithContextDetailed` + annotate | ✅ |
+| `CompilePipeline` + `meridian compile` | ✅ |
+| `FunctionSpecializer` monomorphization | ✅ |
+| `CompileSourcePruner` (no call-site → drop) | ✅ |
+| `IdeTypeSurface` (Union/Optional for IDE) | ✅ API; host parked |
+| `ConverterE2ETest` + eval archive | ✅ |
+| Annotation first-wins on conflicting call sites | ✅ replaced by specialize when multi-concrete |
 
 ### Work packages
 
-#### B1. Productize the compile pipeline (CLI)
+#### B1. Productize the compile pipeline (CLI) — done skeleton
 
 ```bash
 meridian compile path.py \
@@ -75,97 +127,40 @@ meridian compile path.py \
   [--bench cases.json]
 ```
 
-Steps inside `compile`:
-
-1. Load naked library (+ optional usage).
-2. Infer (`inferFileDetailed` or `inferWithContextDetailed`).
-3. Annotate:
-   - default `SAFE_PARTIAL`
-   - if `--specialize` or multi-type call sites detected → `FunctionSpecializer`
-4. Run mypyc on annotated outputs (multi-file when imports need native helpers).
-5. Optional `--bench`: run `generic_benchmark.py` and print speedup table.
-
-Acceptance: one command covers a→d on a fixture that today only lives in JUnit.
-
 #### B2. Benchmark-gated annotation quality
 
-Keep / extend existing gates rather than inventing new scoreboards:
+Keep / extend existing gates (`ConverterE2ETest`, `MonomorphizationTest`,
+`PolyOptionalCallSitesTest`, paper eval under `docs/meridian-eval/`).
 
-| Gate | Role |
-|------|------|
-| `ConverterE2ETest#*_gives_speedup` | annotate quality → mypyc wins |
-| `cross_module_inference_gives_speedup` | multi-module native edge |
-| `listcomp_gives_speedup` | annotation must compile |
-| `MypyStrictGateTest` | annotated fixtures pass `mypy --strict` |
-| `MonomorphizationTest` | specialization correctness + speedup |
+#### B3. Specialization — done
 
-Rule: every new annotate/specialize change either improves a gate or adds a
-deterministic compile/assert before any speedup assert.
-
-#### B3. Wire specialization into the main path
-
-Today specialization is a side path (`MonomorphizationTest` only).
-
-Do:
-
-1. Detect multi-type call-site tuples after context infer.
-2. Prefer `FunctionSpecializer` over `AnnotationWriter` first-wins merge for those funcs.
-3. Emit primary + `_name_typesig` clones with concrete annotations.
-4. Rewrite usage call sites to the matching specialized name **or** emit a thin
-   typed dispatcher that mypyc can still optimize when types are static.
-
-Acceptance: any program with multiple concrete call-site bindings for the same
-function compiles and runs under mypyc (see Part C; `str`/`int` is one fixture).
+Multi-concrete call-site tuples → clones + dispatcher.
 
 #### B4. Performance check protocol
 
-Always report three columns:
+CPython(naked) / mypyc(bare) / mypyc(Meridian), isolated dependency lanes.
 
-1. CPython(naked)
-2. mypyc(bare, no Meridian types) — control
-3. mypyc(Meridian annotated / specialized)
+#### B5. Tree-shake unused defs — done
 
-Use isolated dependency lanes (already fixed in `generic_benchmark.py`) so
-helper `.so` files cannot inflate the CPython baseline.
+`CompileSourcePruner` after annotate/specialize when usage is present.
 
 ---
 
 ## Part C — Outline optional / parametric call-site bindings (general)
 
 `str`/`int` is **only an example**. The same rule applies to **every** distinct
-concrete type tuple Outline/GCP binds at call sites (int/float, list variants,
-str/bytes, …).
-
-### Example (Outline)
-
-```text
-let f = x -> x + x;
-f("string");
-f(100);
-f(1.5);
-```
-
-GCP keeps `f` parametric; each call site supplies a concrete binding.
-Python/mypyc need **concrete** annotations, so one naked `def f(x)` cannot
-honestly carry all of those bindings at once.
+concrete type tuple Outline/GCP binds at call sites.
 
 ### Policy (type-agnostic)
 
 | Situation | Action |
 |-----------|--------|
 | All call sites share one concrete type tuple | Annotate original in place |
-| Multiple concrete type tuples (any types) | Monomorphize: `isinstance` dispatcher at `f` + `_f_<typesig>` clones |
+| Multiple concrete type tuples (any types) | Monomorphize: dispatcher + `_f_<typesig>` clones |
 | Arg outline not concrete / not isinstance-erasable | Ignore that call site for specialization |
-| No usage / no evidence | Leave naked (SAFE_PARTIAL) |
-| Never | First-wins merge of conflicting concrete bindings |
-
-### Engineering
-
-1. Lift planned `name = lambda ...` to `def`.
-2. For each concrete tuple → annotated clone `_name_<sig>`.
-3. Replace original with dispatcher over **all** tuples (not a str/int special case).
-4. Regression: multi-type fixture (str+int and/or int+float) must run correctly
-   under mypyc; correctness before speedup.
+| Usage present, function never reached | Drop from compile input |
+| No usage | Leave module; SAFE_PARTIAL annotate; no tree-shake |
+| Never | First-wins merge of conflicting concrete bindings for compile |
 
 ---
 
@@ -173,22 +168,24 @@ honestly carry all of those bindings at once.
 
 ```text
 Done / in tree
-  B1 CLI compile skeleton (annotate + mypyc + optional bench) ✅
-  B3 specialize + isinstance dispatcher (any multi-concrete tuples) ✅
-  C  poly fixtures (str/int + int/float) ✅
-  Compile uses Meridian annotated output (GCP is infer kernel only) ✅
+  B1 CLI compile skeleton ✅
+  B3 specialize + isinstance dispatcher ✅
+  B5 tree-shake unreachable ✅
+  I0 IdeTypeSurface API ✅
+  C  poly fixtures ✅
+  Dual-surface policy documented ✅
 
 Active
-  B2 keep ConverterE2E / Monomorphization gates green; expand compile benches
+  B2 keep gates green; expand compile benches / paper archive
 
 Later (parked)
-  Part A IDE/LSP
+  Part A IDE/LSP host (I1–I5)
 ```
 
 ## Success metrics
 
-1. ~~`meridian compile` runs a→d~~ ✅ CLI + `CompilePipeline`
-2. ~~Multi-concrete call-site fixture compiles and runs~~ ✅ `PolyOptionalCallSitesTest`
-3. Existing speedup gates do not regress; poly case has correctness gate even
-   if speedup is modest.
-4. IDE remains documented only until Part A is explicitly resumed.
+1. ~~`meridian compile` runs a→c~~ ✅
+2. ~~Multi-concrete call-site fixture compiles and runs~~ ✅
+3. Unused library functions with usage present are absent from mypyc input ✅
+4. IDE hover map can show Union/Optional without going through compile filter ✅
+5. LSP host remains parked until Part A is explicitly resumed

@@ -415,6 +415,12 @@ public class TypeAnnotationGenerator {
         if (outline == null) return null;
         if (outline instanceof UNKNOWN || outline instanceof NOTHING) return null;
         if (outline instanceof ERROR) return null;
+        // Body `%` / `+` towers often leave params as Number/Addable. Emitting
+        // Union[int, float] here blocks call-site int (first-wins). Leave open.
+        if (outline instanceof NUMBER
+                || outline instanceof org.twelve.gcp.outline.projectable.Addable) {
+            return null;
+        }
         if (outline instanceof Function<?, ?> f) {
             return functionOutlineToCallable(f);
         }
@@ -426,19 +432,32 @@ public class TypeAnnotationGenerator {
             if (!(min instanceof ANY) && !(min instanceof NOTHING) && !(min instanceof UNKNOWN)
                     && !(min instanceof Genericable)
                     && !(min instanceof org.twelve.gcp.outline.adt.SumADT)) {
-                return outlineToTypeStr(min);
+                return concreteParamType(outlineToTypeStr(min));
             }
             Outline projected = g.projectedType();
             if (projected != null && !(projected instanceof ANY) && !(projected instanceof UNKNOWN)
                     && !(projected instanceof Genericable)) {
-                return outlineToTypeStr(projected);
+                return concreteParamType(outlineToTypeStr(projected));
             }
             return null; // No max() fallback — let call-site analysis fill it in
         }
         // Bare SumADT (Option/Poly) outlines for parameters come from body-inference extendToBe.
         // Leave them unannotated and let call-site analysis supply the concrete type.
         if (outline instanceof org.twelve.gcp.outline.adt.SumADT) return null;
-        return outlineToTypeStr(outline);
+        return concreteParamType(outlineToTypeStr(outline));
+    }
+
+    /**
+     * Reject numeric-tower width for parameters so demand-driven call sites can
+     * supply {@code int} / {@code float} instead of a premature union.
+     */
+    private static String concreteParamType(String typeStr) {
+        if (typeStr == null) return null;
+        if (typeStr.equals("Union[int, float]") || typeStr.equals("Number")
+                || typeStr.equals("Addable")) {
+            return null;
+        }
+        return typeStr;
     }
 
     /**

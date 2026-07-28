@@ -236,6 +236,10 @@ public final class MeridianCli {
             System.err.println("Specialized: yes (" + outcome.plan().size()
                     + " function(s); multi-concrete call-site tuples → clones + dispatcher)");
         }
+        if (outcome.prunedFunctions() != null && !outcome.prunedFunctions().isEmpty()) {
+            System.err.println("Pruned (unreachable from usage): "
+                    + String.join(", ", outcome.prunedFunctions()));
+        }
         if (!outcome.compileResult().success()) {
             System.err.println("mypyc failed:");
             System.err.println(outcome.compileResult().stderr());

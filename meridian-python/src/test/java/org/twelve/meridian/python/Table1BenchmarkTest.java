@@ -10,11 +10,15 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.*;
 import java.util.*;
 import java.util.concurrent.*;
+import java.util.Locale;
+
+import org.twelve.meridian.python.eval.EvalResultArchive;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Produces data for CGO §2.2 Table 1 and §5.3 Table 3.
+ * Produces data for Meridian product Table 1 / Table 3 style eval
+ * (math_utils four-way). Archives under {@code docs/meridian-eval/}.
  *
  * <p>Four paths measured for math_utils_bare.py:
  * <pre>
@@ -206,6 +210,69 @@ class Table1BenchmarkTest {
         // GCP must be at least 70% as efficient as manual
         assertTrue(avgEfficiency >= 0.70,
                 String.format("GCP efficiency vs manual must be ≥ 70%%; got %.1f%%", avgEfficiency * 100));
+
+        archiveTable1(gcpRows, manualRows, avgEfficiency,
+                inferMedianMs, writeMedianMs);
+    }
+
+    private static void archiveTable1(
+            List<BenchRow> gcpRows, List<BenchRow> manualRows, double avgEfficiency,
+            long inferMedianMs, long writeMedianMs) throws Exception {
+        List<Map<String, Object>> payloadRows = new ArrayList<>();
+        for (BenchRow r : gcpRows) {
+            double manXv = 0;
+            for (BenchRow mr : manualRows) {
+                if (mr.func().equals(r.func())) { manXv = mr.speedupGcp(); break; }
+            }
+            Map<String, Object> m = EvalResultArchive.row(
+                    r.func(), r.correct(),
+                    r.cpythonNs(), r.mypycBareNs(), r.mypycGcpNs(),
+                    r.speedupBare(), r.speedupGcp());
+            m.put("manual_speedup", Math.round(manXv * 100.0) / 100.0);
+            m.put("efficiency_vs_manual_pct",
+                    manXv > 0 ? Math.round(r.speedupGcp() / manXv * 1000.0) / 10.0 : 0);
+            m.put("cv_cpython_pct", r.cvCpythonPct());
+            m.put("cv_bare_pct", r.cvBarePct());
+            m.put("cv_meridian_pct", r.cvGcpPct());
+            payloadRows.add(m);
+        }
+        double avgBare = gcpRows.stream().mapToDouble(BenchRow::speedupBare).average().orElse(0);
+        double avgGcp = gcpRows.stream().mapToDouble(BenchRow::speedupGcp).average().orElse(0);
+        String json = """
+                {
+                  "infer_median_ms": %d,
+                  "annotate_median_ms": %d,
+                  "avg_speedup_bare": %s,
+                  "avg_speedup_meridian": %s,
+                  "avg_efficiency_vs_manual": %s,
+                  "rows": %s
+                }
+                """.formatted(
+                inferMedianMs, writeMedianMs,
+                String.format(Locale.US, "%.4f", avgBare),
+                String.format(Locale.US, "%.4f", avgGcp),
+                String.format(Locale.US, "%.4f", avgEfficiency),
+                EvalResultArchive.rowsToJson(payloadRows));
+        StringBuilder md = new StringBuilder();
+        md.append("## Summary\n\n");
+        md.append(String.format(Locale.US,
+                "- infer median: **%d ms**\n- annotate median: **%d ms**\n"
+                        + "- avg bare×: **%.2f**\n- avg Meridian×: **%.2f**\n"
+                        + "- avg vs manual: **%.1f%%**\n\n",
+                inferMedianMs, writeMedianMs, avgBare, avgGcp, avgEfficiency * 100));
+        md.append("| Function | bare× | Meridian× | manual× | vs manual% |\n");
+        md.append("|----------|-------|----------|---------|------------|\n");
+        for (Map<String, Object> m : payloadRows) {
+            md.append(String.format(Locale.US,
+                    "| `%s` | %s | %s | %s | %s |\n",
+                    m.get("func"), m.get("speedup_bare"), m.get("speedup_vs_native"),
+                    m.get("manual_speedup"), m.get("efficiency_vs_manual_pct")));
+        }
+        Path written = EvalResultArchive.writeSuite(
+                "table1-math-utils",
+                "math_utils four-way — Meridian vs native / manual oracle",
+                json, md.toString());
+        System.out.println("  Archived → " + written.toAbsolutePath());
     }
 
     // ── output ────────────────────────────────────────────────────────────────

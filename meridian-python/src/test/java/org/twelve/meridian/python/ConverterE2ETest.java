@@ -14,6 +14,9 @@ import java.nio.file.*;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.stream.Collectors;
+import java.util.Locale;
+
+import org.twelve.meridian.python.eval.EvalResultArchive;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -86,6 +89,51 @@ class ConverterE2ETest {
                 "AVERAGE (" + sorted.size() + " tests)", totalBare / n, totalGcp / n, overallRatio);
         System.out.println(bot);
         System.out.println();
+
+        try {
+            archiveConverterSummaries(sorted, totalBare / n, totalGcp / n);
+        } catch (Exception e) {
+            System.err.println("  [WARN] Failed to archive converter-e2e results: " + e.getMessage());
+        }
+    }
+
+    private static void archiveConverterSummaries(
+            List<TestSummary> sorted, double avgBare, double avgGcp) throws Exception {
+        List<Map<String, Object>> rows = new ArrayList<>();
+        StringBuilder md = new StringBuilder();
+        md.append("## Summary\n\n");
+        md.append(String.format(Locale.US,
+                "- converters: **%d**\n- avg bare×: **%.2f**\n- avg Meridian×: **%.2f**\n\n",
+                sorted.size(), avgBare, avgGcp));
+        md.append("| Converter | bare× | Meridian× | Meridian/bare |\n");
+        md.append("|-----------|-------|----------|---------------|\n");
+        for (TestSummary s : sorted) {
+            double ratio = s.avgBare() > 0 ? s.avgGcp() / s.avgBare() : 0;
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("converter", s.label());
+            m.put("avg_bare", Math.round(s.avgBare() * 100.0) / 100.0);
+            m.put("avg_meridian", Math.round(s.avgGcp() * 100.0) / 100.0);
+            m.put("meridian_over_bare", Math.round(ratio * 100.0) / 100.0);
+            m.put("func_count", s.funcCount());
+            rows.add(m);
+            md.append(String.format(Locale.US, "| `%s` | %.2f | %.2f | %.2f |\n",
+                    s.label(), s.avgBare(), s.avgGcp(), ratio));
+        }
+        String json = """
+                {
+                  "avg_speedup_bare": %s,
+                  "avg_speedup_meridian": %s,
+                  "converters": %s
+                }
+                """.formatted(
+                String.format(Locale.US, "%.4f", avgBare),
+                String.format(Locale.US, "%.4f", avgGcp),
+                EvalResultArchive.rowsToJson(rows));
+        Path written = EvalResultArchive.writeSuite(
+                "converter-e2e",
+                "Converter E2E — Meridian vs bare mypyc / native",
+                json, md.toString());
+        System.out.println("  Archived → " + written.toAbsolutePath());
     }
 
     // ── test cases ────────────────────────────────────────────────────────────

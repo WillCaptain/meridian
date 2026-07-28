@@ -419,8 +419,15 @@ public class PythonAnnotationWriter {
                         Outline argOutline = argNode.outline();
                         String typeStr = typeGen.outlineToTypeStr(argOutline);
                         if (typeStr != null) {
-                            // putIfAbsent: first call site wins; never overwrite declared types
-                            out.putIfAbsent(fname + "#" + params.get(i), typeStr);
+                            String key = fname + "#" + params.get(i);
+                            String existing = out.get(key);
+                            // Prefer a concrete call-site type over a numeric-tower
+                            // placeholder left by body inference (Number → Union[int,float]).
+                            if (existing == null
+                                    || isNumericTowerPlaceholder(existing)
+                                            && !isNumericTowerPlaceholder(typeStr)) {
+                                out.put(key, typeStr);
+                            }
                         }
                         // Propagate the call-site type into the library parameter's Genericable
                         // constraint so that stub generation (TypeAnnotationGenerator) can see it.
@@ -547,5 +554,12 @@ public class PythonAnnotationWriter {
         int equalsIdx = param.indexOf('=');
         // Annotation present if ':' exists and comes before '=' (or '=' is absent)
         return colonIdx >= 0 && (equalsIdx < 0 || colonIdx < equalsIdx);
+    }
+
+    private static boolean isNumericTowerPlaceholder(String typeStr) {
+        if (typeStr == null) return false;
+        return typeStr.equals("Union[int, float]")
+                || typeStr.equals("Number")
+                || typeStr.equals("Addable");
     }
 }

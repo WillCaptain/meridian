@@ -1,0 +1,23 @@
+{
+  "suite": "table1-math-utils",
+  "title": "math_utils four-way — Meridian vs native / manual oracle",
+  "product": "meridian",
+  "claim_boundary": "Meridian annotate→mypyc product eval; not GCP TOPLAS / Outline-port SOTA",
+  "captured_at": "20260728T003801Z",
+  "payload": {
+  "infer_median_ms": 97,
+  "annotate_median_ms": 11,
+  "avg_speedup_bare": 1.2271,
+  "avg_speedup_meridian": 13.5714,
+  "avg_efficiency_vs_manual": 0.9920,
+  "rows": [
+  {"func": "factorial(10)", "correct": true, "native_ns": 413.7, "mypyc_bare_ns": 217.2, "meridian_ns": 49.3, "speedup_bare": 1.91, "speedup_vs_native": 8.39, "manual_speedup": 8.52, "efficiency_vs_manual_pct": 98.5, "cv_cpython_pct": 12.06, "cv_bare_pct": 0.43, "cv_meridian_pct": 2.41},
+  {"func": "factorial(20)", "correct": true, "native_ns": 933.5, "mypyc_bare_ns": 637.5, "meridian_ns": 391.0, "speedup_bare": 1.46, "speedup_vs_native": 2.39, "manual_speedup": 2.45, "efficiency_vs_manual_pct": 97.6, "cv_cpython_pct": 0.26, "cv_bare_pct": 4.95, "cv_meridian_pct": 0.86},
+  {"func": "fibonacci(30)", "correct": true, "native_ns": 692.3, "mypyc_bare_ns": 680.5, "meridian_ns": 113.3, "speedup_bare": 1.02, "speedup_vs_native": 6.11, "manual_speedup": 6.09, "efficiency_vs_manual_pct": 100.3, "cv_cpython_pct": 3.05, "cv_bare_pct": 3.18, "cv_meridian_pct": 1.29},
+  {"func": "sum_squares(100)", "correct": true, "native_ns": 2818.8, "mypyc_bare_ns": 3118.2, "meridian_ns": 202.0, "speedup_bare": 0.9, "speedup_vs_native": 13.95, "manual_speedup": 14.2, "efficiency_vs_manual_pct": 98.2, "cv_cpython_pct": 2.99, "cv_bare_pct": 0.88, "cv_meridian_pct": 1.55},
+  {"func": "sum_squares(1000)", "correct": true, "native_ns": 28718.9, "mypyc_bare_ns": 38470.0, "meridian_ns": 1570.3, "speedup_bare": 0.75, "speedup_vs_native": 18.29, "manual_speedup": 18.73, "efficiency_vs_manual_pct": 97.7, "cv_cpython_pct": 2.44, "cv_bare_pct": 6.22, "cv_meridian_pct": 2.64},
+  {"func": "is_prime(997)", "correct": true, "native_ns": 1376.7, "mypyc_bare_ns": 1010.1, "meridian_ns": 87.5, "speedup_bare": 1.36, "speedup_vs_native": 15.73, "manual_speedup": 15.64, "efficiency_vs_manual_pct": 100.6, "cv_cpython_pct": 1.22, "cv_bare_pct": 5.88, "cv_meridian_pct": 2.65},
+  {"func": "is_prime(9999991)", "correct": true, "native_ns": 170772.7, "mypyc_bare_ns": 143200.3, "meridian_ns": 5666.2, "speedup_bare": 1.19, "speedup_vs_native": 30.14, "manual_speedup": 29.67, "efficiency_vs_manual_pct": 101.6, "cv_cpython_pct": 2.67, "cv_bare_pct": 1.46, "cv_meridian_pct": 2.38}
+]
+}
+}
