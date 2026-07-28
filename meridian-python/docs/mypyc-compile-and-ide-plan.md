@@ -132,9 +132,11 @@ meridian compile path.py \
 Keep / extend existing gates (`ConverterE2ETest`, `MonomorphizationTest`,
 `PolyOptionalCallSitesTest`, paper eval under `docs/meridian-eval/`).
 
-#### B3. Specialization — done
+#### B3. Specialization — done (+ call rewrite)
 
 Multi-concrete call-site tuples → clones + dispatcher.
+Library + usage call sites feed the plan (callees of hot entries included).
+Library-internal concrete calls rewrite to `_name_<sig>` (skip dispatcher).
 
 #### B4. Performance check protocol
 
@@ -170,13 +172,14 @@ concrete type tuple Outline/GCP binds at call sites.
 Done / in tree
   B1 CLI compile skeleton ✅
   B3 specialize + isinstance dispatcher ✅
+  B3b library call-site plan + rewrite to clones ✅
   B5 tree-shake unreachable ✅
   I0 IdeTypeSurface API ✅
   C  poly fixtures ✅
   Dual-surface policy documented ✅
 
 Active
-  B2 CompilePipelineGateTest + CLI prune/bench + CompileBench ≥3×
+  B2 keep CompilePipelineGateTest / SpecializeCallRewriteTest green
   Expand real-usage fixtures; refresh docs/meridian-eval when benches change
 
 Later (parked)

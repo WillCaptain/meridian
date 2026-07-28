@@ -57,7 +57,7 @@ class CompilePipelineGateTest {
     }
 
     @Test
-    void helper_kept_unused_pruned_and_correct() throws Exception {
+    void helper_from_hot_annotated_pruned_and_beats_native() throws Exception {
         String lib = """
                 def helper(x):
                     return x + 1
@@ -79,7 +79,7 @@ class CompilePipelineGateTest {
                 true,
                 AnnotationPolicy.ALL_CONCRETE,
                 out,
-                "[[\"hot\",[500],8000]]"
+                "[[\"hot\",[500],20000]]"
         ));
 
         assertTrue(outcome.compileResult().success(),
@@ -88,12 +88,17 @@ class CompilePipelineGateTest {
                 () -> "pruned=" + outcome.prunedFunctions());
         assertFalse(outcome.prunedFunctions().contains("helper"),
                 () -> "helper must stay reachable; pruned=" + outcome.prunedFunctions());
-        assertTrue(outcome.annotatedSource().contains("def helper"),
-                () -> outcome.annotatedSource());
+        // Library-internal call sites must pull helper into the specialize plan.
+        assertTrue(outcome.plan().containsKey("helper") || outcome.annotatedSource().contains("x: int"),
+                () -> "helper should be typed via library call site:\n" + outcome.annotatedSource());
         assertTrue(outcome.benchOk(), () -> outcome.benchJson());
         JsonNode row = new ObjectMapper().readTree(outcome.benchJson()).path("rows").get(0);
         assertTrue(row.path("correct").asBoolean(false), () -> outcome.benchJson());
-        // Cross-function call often limits mypyc; speedup gate lives on sum_range benches.
+        double speedup = row.path("speedup_vs_native").asDouble(
+                row.path("speedup_gcp").asDouble(0));
+        assertTrue(speedup >= 2.0,
+                () -> String.format("typed helper hot path ≥2×, got %.2f; src=\n%s\njson=%s",
+                        speedup, outcome.annotatedSource(), outcome.benchJson()));
     }
 
     @Test

@@ -81,7 +81,8 @@ public final class CompilePipeline {
             if (req.specialize()) {
                 plan = specializer.analyse(ctx.libraryAst(), ctx.usageAst());
                 if (!plan.isEmpty()) {
-                    annotated = specializer.specialize(req.librarySource(), plan);
+                    annotated = specializer.specialize(
+                            req.librarySource(), plan, ctx.libraryAst());
                     specialized = FunctionSpecializer.needsPolymorphicDispatch(plan)
                             || plan.values().stream().anyMatch(fs -> !fs.bindings().isEmpty());
                 } else {

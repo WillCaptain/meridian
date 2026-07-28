@@ -39,12 +39,16 @@ import java.util.stream.Collectors;
  *     f(1.0)                → (float,)   # same rule, other types
  *
  *   Generated:
- *     def f(x):                      # isinstance dispatcher
+ *     def f(x):                      # isinstance dispatcher (fallback / external)
  *         if isinstance(x, int): return _f_int(x)
  *         if isinstance(x, str): return _f_str(x)
  *         ...
  *     def _f_int(x: int) -> int: ...
  *     def _f_str(x: str) -> str: ...
+ *
+ *   Library-internal calls with a concrete Outline binding are rewritten to the
+ *   clone ({@code helper(i)} → {@code _helper_int(i)}) so hot paths skip the
+ *   dispatcher.
  * </pre>
  *
  * <h2>Naming convention</h2>
@@ -52,6 +56,9 @@ import java.util.stream.Collectors;
  *   <li>One concrete type tuple → annotate the original in place.</li>
  *   <li>Multiple concrete tuples → dispatcher at the original name +
  *       {@code _name_<typesig>} clones for every tuple.</li>
+ *   <li>Call sites are collected from <em>usage and library</em> ASTs so
+ *       callees of hot functions enter the plan even when usage only names
+ *       the entry point.</li>
  * </ul>
  *
  * <h2>Constraints</h2>
@@ -123,9 +130,16 @@ public class FunctionSpecializer {
         // ── step 2: collect call-site type tuples ─────────────────────────────
         // freq map: funcName → (typeTuple → count)
         // retMap:  funcName → (typeTuple → specializedReturnType)
+        // Usage + library: callees inside hot loops must enter the plan even when
+        // usage only invokes the entry function.
         Map<String, Map<List<String>, Integer>> freq    = new LinkedHashMap<>();
         Map<String, Map<List<String>, String>>  retMap  = new LinkedHashMap<>();
-        scanCallSites(usageAst.program(), funcParams, freq, retMap);
+        if (usageAst != null) {
+            scanCallSites(usageAst.program(), funcParams, freq, retMap);
+        }
+        if (libraryAst != null) {
+            scanCallSites(libraryAst.program(), funcParams, freq, retMap);
+        }
 
         // ── step 3: build FuncSpecializations ─────────────────────────────────
         Map<String, FuncSpecializations> result = new LinkedHashMap<>();
@@ -175,9 +189,16 @@ public class FunctionSpecializer {
      *       bindings — not limited to {@code str}/{@code int}): emit one
      *       {@code _name_typesig} clone per tuple and replace the original name
      *       with an {@code isinstance} dispatcher.</li>
+     *   <li>When {@code libraryAst} is provided, library-internal calls with a
+     *       matching concrete binding are rewritten to the clone name.</li>
      * </ul>
      */
     public String specialize(String originalSource, Map<String, FuncSpecializations> plan) {
+        return specialize(originalSource, plan, null);
+    }
+
+    public String specialize(String originalSource, Map<String, FuncSpecializations> plan,
+                             AST libraryAst) {
         if (plan == null || plan.isEmpty()) return originalSource;
 
         String source = convertPlannedLambdasToDefs(originalSource, plan.keySet());
@@ -211,7 +232,66 @@ public class FunctionSpecializer {
             source = source + "\n# ── GCP demand-driven specializations ─────────────────\n"
                     + extra;
         }
+        if (libraryAst != null) {
+            source = rewriteLibraryCallsToClones(source, libraryAst, plan);
+        }
         return ensureTypingImports(source);
+    }
+
+    /**
+     * Rewrite library-internal {@code f(...)} calls to {@code _f_<sig>(...)} when
+     * the call-site Outline binding matches a polymorphic specialization.
+     */
+    String rewriteLibraryCallsToClones(
+            String source, AST libraryAst, Map<String, FuncSpecializations> plan) {
+        if (source == null || libraryAst == null || plan == null || plan.isEmpty()) {
+            return source;
+        }
+        Map<String, String> rewrites = new LinkedHashMap<>();
+        collectCloneRewrites(libraryAst.program(), plan, rewrites);
+        if (rewrites.isEmpty()) return source;
+        String out = source;
+        List<Map.Entry<String, String>> ordered = new ArrayList<>(rewrites.entrySet());
+        ordered.sort((a, b) -> Integer.compare(b.getKey().length(), a.getKey().length()));
+        for (Map.Entry<String, String> e : ordered) {
+            if (e.getKey().equals(e.getValue())) continue;
+            out = out.replace(e.getKey(), e.getValue());
+        }
+        return out;
+    }
+
+    private void collectCloneRewrites(
+            Node node, Map<String, FuncSpecializations> plan, Map<String, String> out) {
+        if (node instanceof FunctionCallNode call
+                && call.function() instanceof Identifier id) {
+            FuncSpecializations fs = plan.get(id.name());
+            if (fs != null && !fs.isMonomorphic()) {
+                List<String> argTypes = call.arguments().stream()
+                        .map(arg -> typeGen.outlineToTypeStr(arg.outline()))
+                        .toList();
+                if (argTypes.stream().allMatch(AnnotationPolicy::isConcrete)
+                        && argTypes.stream().allMatch(t -> runtimeTypeName(t) != null)) {
+                    TypeBinding match = null;
+                    for (TypeBinding b : fs.bindings()) {
+                        if (b.argTypes().equals(argTypes)) {
+                            match = b;
+                            break;
+                        }
+                    }
+                    if (match != null) {
+                        String oldCall = call.lexeme();
+                        String args = call.arguments().stream()
+                                .map(Expression::lexeme)
+                                .collect(Collectors.joining(","));
+                        String newCall = match.specName(false) + "(" + args + ")";
+                        out.putIfAbsent(oldCall, newCall);
+                    }
+                }
+            }
+        }
+        for (Node child : node.nodes()) {
+            collectCloneRewrites(child, plan, out);
+        }
     }
 
     /**
