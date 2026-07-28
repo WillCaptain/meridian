@@ -6,6 +6,8 @@ import org.twelve.meridian.python.PythonAnnotationWriter;
 import org.twelve.meridian.python.PythonInferencer;
 import org.twelve.meridian.python.TypeAnnotationGenerator;
 import org.twelve.meridian.python.TypeEvalPySiteExporter;
+import org.twelve.meridian.python.eval.CorpusProofRunner;
+import org.twelve.meridian.python.eval.EvalResultArchive;
 
 import java.io.File;
 import java.io.IOException;
@@ -14,6 +16,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -25,6 +28,7 @@ import java.util.Map;
  *   meridian sites   path.py [-o main_result.json]
  *   meridian compile path.py [-o out_dir] [--calls usage.py|--calls-inline CODE]
  *                    [--specialize|--no-specialize] [--annotate-all] [--bench cases.json]
+ *   meridian corpus  corpus_dir/ [--archive]
  * </pre>
  *
  * <p>{@code infer}/{@code compile} default to {@link AnnotationPolicy#SAFE_PARTIAL}.
@@ -56,6 +60,9 @@ public final class MeridianCli {
         if ("version".equals(cmd) || "-V".equals(cmd) || "--version".equals(cmd)) {
             System.out.println("meridian " + VERSION);
             return 0;
+        }
+        if ("corpus".equals(cmd)) {
+            return runCorpus(args);
         }
         if (!List.of("infer", "stub", "sites", "compile").contains(cmd)) {
             System.err.println("Unknown command: " + cmd);
@@ -266,6 +273,70 @@ public final class MeridianCli {
         return 0;
     }
 
+    /**
+     * Four-gate corpus proof on a directory with recipes.py / calls.py /
+     * cases.json / manifest.json (optional calls_bench.py).
+     */
+    private static int runCorpus(String[] args) {
+        Path dir = null;
+        boolean archive = false;
+        for (int i = 1; i < args.length; i++) {
+            String a = args[i];
+            if ("--archive".equals(a)) {
+                archive = true;
+            } else if ("-h".equals(a) || "--help".equals(a)) {
+                System.out.println("Usage: meridian corpus <corpus_dir> [--archive]");
+                System.out.println("Gates: coverage → mypyc → correctness → speedup vs native");
+                return 0;
+            } else if (a.startsWith("-")) {
+                System.err.println("Unknown option: " + a);
+                return 2;
+            } else if (dir == null) {
+                dir = Path.of(a);
+            } else {
+                System.err.println("Unexpected argument: " + a);
+                return 2;
+            }
+        }
+        if (dir == null || !Files.isDirectory(dir)) {
+            System.err.println("Usage: meridian corpus <corpus_dir> [--archive]");
+            return 2;
+        }
+        try {
+            CorpusProofRunner.Spec spec = CorpusProofRunner.loadDir(dir);
+            Path work = Files.createTempDirectory("meridian_corpus_cli_");
+            CorpusProofRunner.Report report = new CorpusProofRunner().evaluate(spec, work);
+            System.out.printf(Locale.US,
+                    "corpus=%s param_coverage=%.1f%% return_coverage=%.1f%% compile=%s correct=%.0f%% avg_speedup=%.2fx gates=%s%n",
+                    report.corpusId(),
+                    100 * report.coverage().paramCoverage(),
+                    100 * report.coverage().returnCoverage(),
+                    report.compileOk() ? "ok" : "FAIL",
+                    100 * report.correctRate(),
+                    report.avgSpeedup(),
+                    report.gatesPass(spec.minParamCoverage(), spec.minAvgSpeedup()));
+            if (!report.compileOk()) {
+                System.err.println(report.compileError());
+            }
+            for (CorpusProofRunner.BenchRow r : report.rows()) {
+                System.out.printf(Locale.US, "  %s correct=%s speedup=%.2fx%n",
+                        r.func(), r.correct(), r.speedupVsNative());
+            }
+            if (archive) {
+                CorpusProofRunner.archive(report, spec);
+                System.err.println("Archived under " + EvalResultArchive.defaultRoot());
+            }
+            return report.gatesPass(spec.minParamCoverage(), spec.minAvgSpeedup()) ? 0 : 1;
+        } catch (IOException e) {
+            System.err.println("I/O error: " + e.getMessage());
+            return 1;
+        } catch (RuntimeException e) {
+            System.err.println("Corpus proof failed: " + e.getMessage());
+            e.printStackTrace(System.err);
+            return 1;
+        }
+    }
+
     private static String baseName(File f) {
         String name = f.getName();
         int dot = name.lastIndexOf('.');
@@ -306,6 +377,9 @@ public final class MeridianCli {
         ps.println("        2) eval result == native CPython");
         ps.println("        3) eval performance vs native CPython");
         ps.println("      cases JSON: [[\"fn\",[args],iters], ...]");
+        ps.println("  meridian corpus <corpus_dir> [--archive]");
+        ps.println("      Four gates: coverage → mypyc → correctness → speedup");
+        ps.println("      Dir layout: recipes.py calls.py cases.json manifest.json");
         ps.println("  meridian version | help");
         ps.println();
         ps.println("Specialization: every distinct concrete call-site type tuple");
