@@ -10,6 +10,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class MeridianCliTest {
@@ -92,5 +93,32 @@ class MeridianCliTest {
         });
         assertEquals(0, code, "compile --bench must pass native correctness");
         assertTrue(Files.isRegularFile(outDir.resolve("sumcli_native.py")));
+    }
+
+    @Test
+    void compile_prunes_unused_and_benches_hot_path() throws Exception {
+        Path py = tmp.resolve("prune_cli.py");
+        Files.writeString(py, """
+                def hot(n):
+                    total = 0
+                    for i in range(n):
+                        total += i
+                    return total
+
+                def unused(n):
+                    return n + 1
+                """);
+        Path outDir = tmp.resolve("prune_cli_out");
+        int code = MeridianCli.run(new String[]{
+                "compile", py.toString(),
+                "-o", outDir.toString(),
+                "--calls-inline", "hot(100)\n",
+                "--annotate-all",
+                "--bench", "[[\"hot\",[600],15000]]"
+        });
+        assertEquals(0, code, "compile --bench with prune must pass");
+        String annotated = Files.readString(outDir.resolve("prune_cli.py"));
+        assertFalse(annotated.contains("def unused"), annotated);
+        assertTrue(annotated.contains("def hot"), annotated);
     }
 }

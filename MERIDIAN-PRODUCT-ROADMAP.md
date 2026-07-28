@@ -121,11 +121,13 @@ Only after Phase 2 is solid: scale exporter + timeouts + remaining Python-only f
 2. ~~Phase 2 progress harness~~ — TypeEvalPy micro strict/compat **513/513**
    (`meridian-python/docs/typeevalpy-micro-progress.{md,json}`).
 3. **Active — Phase 4 mypyc productization** (Meridian result → compile, not raw GCP):
-   - `meridian compile` + `CompilePipeline` (annotate / specialize / mypyc / optional bench)
-   - Multi-concrete Outline call-site bindings → dispatcher + clones (any types)
-   - Plan: `meridian-python/docs/mypyc-compile-and-ide-plan.md` (IDE parked)
+   - `meridian compile` + `CompilePipeline` (annotate / specialize / prune / mypyc / bench)
+   - Dual surface: `IdeTypeSurface` (Union/Optional) vs compile monomorphize+tree-shake
+   - Gates: `CompilePipelineGateTest`, `CompileBenchTest`, CLI prune+bench
+   - Paper archive: `meridian-python/docs/meridian-eval/`
+   - Plan: `meridian-python/docs/mypyc-compile-and-ide-plan.md` (IDE host parked)
 4. Keep Outline toplas **read-only** for Meridian demos (do not edit frozen 513 claim).
-5. Later: Phase 3 IDE/LSP; optional TypeEvalPy Docker adapter polish.
+5. Later: Phase 3 IDE/LSP host; optional TypeEvalPy Docker adapter polish.
 
 ### Outline reference (keep current)
 

@@ -176,7 +176,8 @@ Done / in tree
   Dual-surface policy documented ✅
 
 Active
-  B2 keep gates green; expand compile benches / paper archive
+  B2 CompilePipelineGateTest + CLI prune/bench + CompileBench ≥3×
+  Expand real-usage fixtures; refresh docs/meridian-eval when benches change
 
 Later (parked)
   Part A IDE/LSP host (I1–I5)

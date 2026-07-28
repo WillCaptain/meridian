@@ -1,5 +1,7 @@
 package org.twelve.meridian.python;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 
 import java.nio.file.Files;
@@ -42,5 +44,12 @@ class CompileBenchTest {
         assertTrue(outcome.benchJson().contains("\"correct\": true")
                         || outcome.benchJson().contains("\"correct\":true"),
                 () -> outcome.benchJson());
+
+        JsonNode root = new ObjectMapper().readTree(outcome.benchJson());
+        double speedup = root.path("rows").get(0).path("speedup_vs_native").asDouble(
+                root.path("rows").get(0).path("speedup_gcp").asDouble(0));
+        assertTrue(speedup >= 3.0,
+                () -> String.format("sum_range must be ≥3× vs native, got %.2f; %s",
+                        speedup, outcome.benchJson()));
     }
 }
