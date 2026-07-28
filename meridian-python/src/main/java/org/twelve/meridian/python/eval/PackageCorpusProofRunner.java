@@ -33,11 +33,23 @@ public final class PackageCorpusProofRunner {
     private static final Pattern BAD_LIST_RETURN = Pattern.compile(
             "(?m)^(def\\s+[A-Za-z_][A-Za-z0-9_]*\\s*\\([^)]*\\))\\s*->\\s*list\\[[^\\]]+\\]\\s*:");
 
+    /**
+     * How Meridian annotations are prepared for mypyc.
+     * <ul>
+     *   <li>{@code strip_deps} — L5 default: strip all anns on non-primary modules</li>
+     *   <li>{@code keep} — keep param anns on every module; strip returns / AnnAssign</li>
+     *   <li>{@code keep_deps} — L6: keep param anns on non-primary (hot) modules;
+     *       strip all on primary facade (avoids cross-module over-widen)</li>
+     *   <li>{@code strip_all} — erase every annotation before mypyc</li>
+     * </ul>
+     */
     public record PackageSpec(
             String corpusId,
             String title,
             String primaryModule,
             Map<String, String> modules,
+            List<String> compileModules,
+            String annotationMode,
             String coverageUsage,
             String benchUsage,
             String benchCasesJson,
@@ -55,9 +67,25 @@ public final class PackageCorpusProofRunner {
                 String benchCasesJson,
                 double minParamCoverage,
                 double minAvgSpeedup) {
-            this(corpusId, title, primaryModule, modules, coverageUsage, benchUsage,
-                    benchCasesJson, minParamCoverage, minAvgSpeedup,
+            this(corpusId, title, primaryModule, modules, List.of(), "strip_deps",
+                    coverageUsage, benchUsage, benchCasesJson, minParamCoverage, minAvgSpeedup,
                     "Multi-module import graph; not full upstream more.py");
+        }
+
+        public PackageSpec(
+                String corpusId,
+                String title,
+                String primaryModule,
+                Map<String, String> modules,
+                String coverageUsage,
+                String benchUsage,
+                String benchCasesJson,
+                double minParamCoverage,
+                double minAvgSpeedup,
+                String claimBoundary) {
+            this(corpusId, title, primaryModule, modules, List.of(), "strip_deps",
+                    coverageUsage, benchUsage, benchCasesJson, minParamCoverage, minAvgSpeedup,
+                    claimBoundary);
         }
     }
 
@@ -82,27 +110,34 @@ public final class PackageCorpusProofRunner {
         Map<String, String> annotatedCoverage = annotateAll(spec.modules(), spec.coverageUsage());
         AnnotationCoverage.Stats cov = aggregateCoverage(annotatedCoverage);
 
-        // Gates 2–4 — SAFE_PARTIAL annotate, then mypyc-sanitize + multi-file compile + bench.
-        // Large upstream modules often get unsound Meridian annotations (Epsilon, list vs tuple,
-        // None defaults). Strip those on non-primary modules; keep primary param annotations.
+        // Gates 2–4 — SAFE_PARTIAL annotate → optional sanitize → mypyc (+ optional module subset).
         Map<String, String> annotatedCompile = annotateAll(spec.modules(), spec.benchUsage());
+        String mode = spec.annotationMode() == null || spec.annotationMode().isBlank()
+                ? "strip_deps" : spec.annotationMode().toLowerCase(Locale.ROOT);
         Map<String, String> repaired = new LinkedHashMap<>();
         for (Map.Entry<String, String> e : annotatedCompile.entrySet()) {
-            String src = repairReturns(e.getValue());
-            if (e.getKey().equals(spec.primaryModule())) {
-                repaired.put(e.getKey(), stripAnnotations(src, "returns"));
-            } else {
-                repaired.put(e.getKey(), stripAnnotations(src, "all"));
-            }
+            repaired.put(e.getKey(), prepareForMypyc(e.getKey(), e.getValue(),
+                    spec.primaryModule(), mode));
         }
         annotatedCompile = repaired;
+
+        List<String> compileNames = spec.compileModules() == null || spec.compileModules().isEmpty()
+                ? new ArrayList<>(spec.modules().keySet())
+                : new ArrayList<>(spec.compileModules());
         List<File> compileFiles = new ArrayList<>();
         File primaryFile = null;
+        // Always materialize every module (imports / native lane); mypyc only the compile set.
         for (Map.Entry<String, String> e : annotatedCompile.entrySet()) {
             Path p = meridianDir.resolve(e.getKey() + ".py");
             Files.writeString(p, e.getValue(), StandardCharsets.UTF_8);
+        }
+        for (String name : compileNames) {
+            if (!annotatedCompile.containsKey(name)) {
+                throw new IllegalArgumentException("compile module missing: " + name);
+            }
+            Path p = meridianDir.resolve(name + ".py");
             compileFiles.add(p.toFile());
-            if (e.getKey().equals(spec.primaryModule())) {
+            if (name.equals(spec.primaryModule())) {
                 primaryFile = p.toFile();
             }
         }
@@ -197,6 +232,21 @@ public final class PackageCorpusProofRunner {
     static String repairReturns(String annotated) {
         if (annotated == null) return null;
         return BAD_LIST_RETURN.matcher(annotated).replaceAll("$1:");
+    }
+
+    static String prepareForMypyc(String module, String annotated, String primary, String mode) {
+        String src = repairReturns(annotated);
+        return switch (mode) {
+            case "keep" -> stripAnnotations(src, "returns");
+            case "keep_deps" -> module.equals(primary)
+                    ? stripAnnotations(src, "all")
+                    : stripAnnotations(src, "returns");
+            case "strip_all" -> stripAnnotations(src, "all");
+            default -> // strip_deps
+                    module.equals(primary)
+                            ? stripAnnotations(src, "returns")
+                            : stripAnnotations(src, "all");
+        };
     }
 
     /**
@@ -313,11 +363,19 @@ public final class PackageCorpusProofRunner {
                 ? Files.readString(benchCalls, StandardCharsets.UTF_8)
                 : coverage;
         String cases = Files.readString(dir.resolve("cases.json"), StandardCharsets.UTF_8).trim();
+        List<String> compileModules = new ArrayList<>();
+        if (man.path("compile_modules").isArray()) {
+            for (JsonNode n : man.path("compile_modules")) {
+                compileModules.add(n.asText());
+            }
+        }
         return new PackageSpec(
                 man.path("corpus_id").asText(dir.getFileName().toString()),
                 man.path("title").asText("L3 package corpus"),
                 man.path("primary_module").asText(),
                 modules,
+                compileModules,
+                man.path("mypyc_annotation_mode").asText("strip_deps"),
                 coverage,
                 benchUsage,
                 cases,
@@ -344,6 +402,10 @@ public final class PackageCorpusProofRunner {
         payload.put("corpus", report.corpusId());
         payload.put("claim_boundary", spec.claimBoundary());
         payload.put("modules", new ArrayList<>(spec.modules().keySet()));
+        payload.put("compile_modules", spec.compileModules() == null || spec.compileModules().isEmpty()
+                ? new ArrayList<>(spec.modules().keySet())
+                : new ArrayList<>(spec.compileModules()));
+        payload.put("mypyc_annotation_mode", spec.annotationMode());
         payload.put("primary_module", spec.primaryModule());
         payload.put("funcs_total", report.coverage().funcsTotal());
         payload.put("param_coverage", round3(report.coverage().paramCoverage()));

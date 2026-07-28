@@ -1,0 +1,25 @@
+{
+  "corpus_id": "l6-more-itertools-full",
+  "title": "L6 full more.py coverage + annotated hot path",
+  "claim_boundary": "Coverage on nearly-full more.py funcs; mypyc on hot subgraph with Meridian param anns kept on mi_hot (facade stripped); larger inputs; not every class/thread helper",
+  "primary_module": "mi_facade",
+  "package_dir": "flat",
+  "modules": [
+    "mi_recipes",
+    "mi_more_full",
+    "mi_hot",
+    "mi_facade"
+  ],
+  "compile_modules": [
+    "mi_hot",
+    "mi_facade"
+  ],
+  "mypyc_annotation_mode": "keep_deps",
+  "gates": {
+    "min_param_coverage": 0.15,
+    "min_compile_success": 1.0,
+    "min_correct_rate": 1.0,
+    "min_avg_speedup_vs_native": 2.0,
+    "min_funcs_total": 80
+  }
+}

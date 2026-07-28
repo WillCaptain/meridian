@@ -1,0 +1,11 @@
+nums = list(range(64))
+flags = [True, False, True, True] * 8
+a = [float(i % 7) for i in range(64)]
+b = [float(i % 5) * 0.1 for i in range(64)]
+_ = take_sum(32, nums)
+_ = quantify_bool(flags)
+_ = nth_item(nums, 10)
+_ = all_equal_seq([3] * 16)
+_ = dotproduct_seq(a, b)
+_ = chunked_lens(nums, 8)
+_ = flatten_list([[0, 1], [2, 3], [4]])
