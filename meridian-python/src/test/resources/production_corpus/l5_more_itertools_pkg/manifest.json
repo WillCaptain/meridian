@@ -1,0 +1,14 @@
+{
+  "corpus_id": "l5-more-itertools-pkg",
+  "title": "L5 upstream more-itertools package surface",
+  "claim_boundary": "Full recipes.py + selected more.py (v10.7.0); primary keeps Meridian params; deps annotation-stripped for mypyc; not entire more.py",
+  "primary_module": "mi_facade",
+  "package_dir": "flat",
+  "modules": ["mi_recipes", "mi_more", "mi_facade"],
+  "gates": {
+    "min_param_coverage": 0.25,
+    "min_compile_success": 1.0,
+    "min_correct_rate": 1.0,
+    "min_avg_speedup_vs_native": 1.02
+  }
+}

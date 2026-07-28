@@ -3,10 +3,10 @@
   "title": "L3 more-itertools multi-module package",
   "product": "meridian",
   "claim_boundary": "Meridian annotate→mypyc product eval; not GCP TOPLAS / Outline-port SOTA",
-  "captured_at": "20260728T023548Z",
+  "captured_at": "20260728T040026Z",
   "payload": {
   "corpus" : "l3-more-itertools",
-  "claim_boundary" : "Multi-module import graph; adapted list hot paths; not full upstream more.py",
+  "claim_boundary" : "Multi-module import graph (facade→recipes→numeric); adapted list hot paths; not full upstream more.py",
   "modules" : [ "mi_numeric", "mi_recipes", "mi_facade" ],
   "primary_module" : "mi_recipes",
   "funcs_total" : 10,
@@ -14,57 +14,57 @@
   "return_coverage" : 0.8,
   "mypyc_compile_ok" : true,
   "correct_rate" : 1.0,
-  "avg_speedup_vs_native" : 3.628,
+  "avg_speedup_vs_native" : 3.256,
   "gates_pass" : true,
   "partially_unannotated_funcs" : [ "mi_numeric.mul_acc", "mi_recipes.dotproduct", "mi_recipes.recipe_tabulate" ],
   "rows" : [ {
     "func" : "quantify([0, 1, 0, 1, 1, 0, 1, 1, 0, 1], 10)",
     "correct" : true,
-    "native_ns" : 773.9,
-    "meridian_ns" : 119.6,
-    "speedup_vs_native" : 6.47
+    "native_ns" : 439.0,
+    "meridian_ns" : 96.3,
+    "speedup_vs_native" : 4.56
   }, {
     "func" : "take_sum(5, [1, 2, 3, 4, 5, 6, 7, 8])",
     "correct" : true,
-    "native_ns" : 253.2,
-    "meridian_ns" : 72.4,
-    "speedup_vs_native" : 3.5
+    "native_ns" : 225.0,
+    "meridian_ns" : 69.3,
+    "speedup_vs_native" : 3.25
   }, {
     "func" : "all_equal([3, 3, 3, 3, 3], 5)",
     "correct" : true,
-    "native_ns" : 238.5,
-    "meridian_ns" : 59.4,
-    "speedup_vs_native" : 4.02
+    "native_ns" : 220.3,
+    "meridian_ns" : 62.1,
+    "speedup_vs_native" : 3.55
   }, {
     "func" : "ncycles_sum([1, 2, 3, 4, 5, 6, 7, 8], 3, 8)",
     "correct" : true,
-    "native_ns" : 944.9,
-    "meridian_ns" : 186.7,
-    "speedup_vs_native" : 5.06
+    "native_ns" : 979.3,
+    "meridian_ns" : 214.8,
+    "speedup_vs_native" : 4.56
   }, {
     "func" : "pairwise_product_sum([1, 2, 3, 4, 5, 6, 7, 8], 8)",
     "correct" : true,
-    "native_ns" : 384.4,
+    "native_ns" : 420.8,
     "meridian_ns" : 111.6,
-    "speedup_vs_native" : 3.44
+    "speedup_vs_native" : 3.77
   }, {
     "func" : "first_true_index([0, 0, 0, 0, 0, 0, 7], 7)",
     "correct" : true,
-    "native_ns" : 263.0,
-    "meridian_ns" : 66.9,
-    "speedup_vs_native" : 3.93
+    "native_ns" : 275.9,
+    "meridian_ns" : 73.6,
+    "speedup_vs_native" : 3.75
   }, {
     "func" : "dotproduct([1.0, 2.0, 3.0, 4.0, 5.0], [0.5, 0.5, 0.5, 0.5, 0.5], 5)",
     "correct" : true,
-    "native_ns" : 342.9,
-    "meridian_ns" : 260.6,
-    "speedup_vs_native" : 1.32
+    "native_ns" : 360.1,
+    "meridian_ns" : 310.3,
+    "speedup_vs_native" : 1.16
   }, {
     "func" : "recipe_tabulate(200, 1)",
     "correct" : true,
-    "native_ns" : 7923.6,
-    "meridian_ns" : 6208.2,
-    "speedup_vs_native" : 1.28
+    "native_ns" : 8100.4,
+    "meridian_ns" : 5574.7,
+    "speedup_vs_native" : 1.45
   } ]
 }
 }

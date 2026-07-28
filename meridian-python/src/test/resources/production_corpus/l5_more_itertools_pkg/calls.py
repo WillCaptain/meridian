@@ -1,0 +1,21 @@
+nums = [1, 2, 3, 4, 5, 6, 7, 8]
+a = [10.0, 15.0, 12.0]
+b = [0.65, 0.80, 1.25]
+nested = [[0, 1], [2, 3], [4]]
+flags = [True, False, True, True]
+
+_ = take_list(3, nums)
+_ = nth_item(nums, 3)
+_ = all_equal_seq([3, 3, 3, 3])
+_ = quantify_bool(flags)
+_ = dotproduct_seq(a, b)
+_ = first_true_val([0, 0, 7, 0])
+_ = ilen_seq(nums)
+_ = ncycles_list([1, 2], 3)
+_ = flatten_list(nested)
+_ = chunked_lens(nums, 3)
+_ = first(nums)
+_ = last(nums)
+_ = one([42])
+_ = take(3, nums)
+_ = consume(iter(nums), 2)

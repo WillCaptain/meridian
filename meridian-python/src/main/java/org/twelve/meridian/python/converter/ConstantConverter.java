@@ -3,6 +3,7 @@ package org.twelve.meridian.python.converter;
 import org.twelve.gcp.ast.AST;
 import org.twelve.gcp.ast.Node;
 import org.twelve.gcp.ast.Token;
+import org.twelve.gcp.common.NullLiteral;
 import org.twelve.gcp.node.expression.LiteralNode;
 
 import java.util.Map;
@@ -17,7 +18,10 @@ public class ConstantConverter extends PyConverter {
     @Override
     public Node convert(AST ast, Map<String, Object> pyNode, Node parent) {
         Object val = pyNode.get("value");
-        if (val == null) return LiteralNode.parse(ast, new Token<>(null, 0));
+        // Python None arrives as JSON/bridge null — map to GCP NullLiteral (Token forbids null data).
+        if (val == null) {
+            return LiteralNode.parse(ast, new Token<>(NullLiteral.INSTANCE, 0));
+        }
         if (val instanceof Integer) return LiteralNode.parse(ast, new Token<>((long)(int)(Integer) val, 0));
         if (val instanceof Long) return LiteralNode.parse(ast, new Token<>((Long) val, 0));
         if (val instanceof Double) return LiteralNode.parse(ast, new Token<>((Double) val, 0));
