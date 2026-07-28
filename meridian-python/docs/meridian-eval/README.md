@@ -11,6 +11,7 @@ Artifacts for a future **Meridian → dynamic languages / mypyc** paper.
 | `thealgorithms-maths` | `TheAlgorithmsBenchmarkTest` | stripped TheAlgorithms maths funcs |
 | `converter-e2e` | `ConverterE2ETest` (AfterAll) | per-converter avg bare× / Meridian× |
 | `converter-e2e-sample` | `ConverterE2ESampleArchiveTest` | curated subset for quicker paper refresh |
+| `mini-project-sample` | `MiniProjectCompileSampleTest` | real-shaped `--calls` prune/rewrite gate |
 
 ## Files
 
@@ -26,7 +27,7 @@ JSON envelope fields: `suite`, `title`, `product`, `claim_boundary`, `captured_a
 From repo root (mypyc + CPython required):
 
 ```bash
-mvn -pl meridian-python -Dtest=Table1BenchmarkTest,TheAlgorithmsBenchmarkTest,ConverterE2ESampleArchiveTest test
+mvn -pl meridian-python -Dtest=Table1BenchmarkTest,TheAlgorithmsBenchmarkTest,ConverterE2ESampleArchiveTest,MiniProjectCompileSampleTest test
 # full converter matrix (slow):
 mvn -pl meridian-python -Dtest=ConverterE2ETest test
 ```

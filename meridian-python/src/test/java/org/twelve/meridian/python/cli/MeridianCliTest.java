@@ -96,6 +96,37 @@ class MeridianCliTest {
     }
 
     @Test
+    void compile_mini_project_calls_file_prunes_and_specializes() throws Exception {
+        Path dir = tmp.resolve("mini_proj");
+        Files.createDirectories(dir);
+        Path lib = dir.resolve("stats_kit.py");
+        Path calls = dir.resolve("calls.py");
+        Files.writeString(lib, loadClasspath("mini_project/stats_kit.py"));
+        Files.writeString(calls, loadClasspath("mini_project/calls.py"));
+        Path outDir = tmp.resolve("mini_proj_out");
+
+        int code = MeridianCli.run(new String[]{
+                "compile", lib.toString(),
+                "--calls", calls.toString(),
+                "--annotate-all",
+                "-o", outDir.toString(),
+                "--bench", "[[\"rolling_sum\",[300],12000]]"
+        });
+        assertEquals(0, code, "meridian compile --calls mini_project must pass");
+        String annotated = Files.readString(outDir.resolve("stats_kit.py"));
+        assertFalse(annotated.contains("def unused_histogram"), annotated);
+        assertFalse(annotated.contains("def unused_format_report"), annotated);
+        assertTrue(annotated.contains("_tag_int") || annotated.contains("isinstance"),
+                annotated);
+    }
+
+    private static String loadClasspath(String path) throws Exception {
+        var url = MeridianCliTest.class.getClassLoader().getResource(path);
+        assertTrue(url != null, path);
+        return Files.readString(Path.of(url.toURI()));
+    }
+
+    @Test
     void compile_prunes_unused_and_benches_hot_path() throws Exception {
         Path py = tmp.resolve("prune_cli.py");
         Files.writeString(py, """

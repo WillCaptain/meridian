@@ -1,0 +1,13 @@
+{
+  "suite": "mini-project-sample",
+  "title": "Mini project — prune / specialize / native bench",
+  "product": "meridian",
+  "claim_boundary": "Meridian annotate→mypyc product eval; not GCP TOPLAS / Outline-port SOTA",
+  "captured_at": "20260728T010325Z",
+  "payload": {
+  "fixture": "mini_project/stats_kit.py + calls.py",
+  "rows": [
+  {"func": "rolling_sum", "correct": true, "speedup_vs_native": 26.07, "pruned": "unused_histogram,unused_format_report", "poly_tag": true, "helper_kept": true}
+]
+}
+}
