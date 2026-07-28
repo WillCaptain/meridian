@@ -11,22 +11,25 @@ import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 /**
- * Product compile path: naked Python → annotate (/specialize) → mypyc → optional bench.
+ * Product compile path: naked Python → Meridian annotate (/specialize) → mypyc
+ * → optional native eval check.
  *
- * <p>Reuses existing inferencer, annotation writer, {@link FunctionSpecializer},
- * and {@link MypycRunner}. This is the CLI/orchestration layer over work already
- * proven in {@code ConverterE2ETest} / {@code MonomorphizationTest}.
+ * <p>With {@code benchCasesJson}, after compile:
+ * <ol>
+ *   <li>Eval correctness: Meridian(.so) result == native CPython result</li>
+ *   <li>Eval performance: speedup vs native CPython</li>
+ * </ol>
  */
 public final class CompilePipeline {
 
     public record Request(
             String librarySource,
             String moduleName,
-            String usageSource,          // nullable — enables demand-driven annotate / specialize
-            boolean specialize,          // when usage present: monomorphize multi-type call sites
+            String usageSource,          // nullable
+            boolean specialize,
             AnnotationPolicy policy,
             Path outputDir,
-            String benchCasesJson        // nullable — JSON for generic_benchmark.py
+            String benchCasesJson        // nullable — enables native eval check
     ) {}
 
     public record Outcome(
@@ -34,6 +37,7 @@ public final class CompilePipeline {
             Path annotatedFile,
             MypycRunner.CompileResult compileResult,
             String benchJson,            // nullable
+            boolean benchOk,             // true when no bench, or all cases correct
             boolean specialized,
             Map<String, FunctionSpecializer.FuncSpecializations> plan
     ) {}
@@ -92,33 +96,44 @@ public final class CompilePipeline {
                 mypyc.compile(annFile.toFile(), req.outputDir().toFile());
 
         String benchJson = null;
+        boolean benchOk = true;
         if (req.benchCasesJson() != null && !req.benchCasesJson().isBlank()
                 && compiled.success()) {
-            benchJson = runBenchmark(req, annFile, compiled);
+            BenchRun bench = runBenchmark(req, compiled);
+            benchJson = bench.json();
+            benchOk = bench.ok();
         }
 
-        return new Outcome(annotated, annFile, compiled, benchJson, specialized, plan);
+        return new Outcome(annotated, annFile, compiled, benchJson, benchOk, specialized, plan);
     }
 
-    private String runBenchmark(Request req, Path annFile, MypycRunner.CompileResult annCompiled)
+    private record BenchRun(String json, boolean ok) {}
+
+    /**
+     * Layout in outputDir:
+     * <ul>
+     *   <li>{@code <module>_native.py} — naked source (CPython baseline)</li>
+     *   <li>{@code <module>_native.so} — optional mypyc(bare) control</li>
+     *   <li>{@code <module>.py} + {@code <module>.so} — Meridian annotated</li>
+     * </ul>
+     */
+    private BenchRun runBenchmark(Request req, MypycRunner.CompileResult annCompiled)
             throws IOException {
-        // Bare control: compile naked library under a distinct module name.
-        String bareName = req.moduleName() + "_bare";
-        Path barePy = req.outputDir().resolve(bareName + ".py");
-        Files.writeString(barePy, req.librarySource(), StandardCharsets.UTF_8);
+        String nativeName = req.moduleName() + "_native";
+        String meridianName = req.moduleName();
+
+        Path nativePy = req.outputDir().resolve(nativeName + ".py");
+        Files.writeString(nativePy, req.librarySource(), StandardCharsets.UTF_8);
+
+        // Optional control lane: mypyc on naked source (same module as native).
         MypycRunner.CompileResult bareCompiled =
-                mypyc.compile(barePy.toFile(), req.outputDir().toFile());
+                mypyc.compile(nativePy.toFile(), req.outputDir().toFile());
         if (!bareCompiled.success()) {
-            return "{\"error\":\"bare mypyc compile failed\",\"stderr\":"
-                    + jsonEscape(bareCompiled.stderr()) + "}";
+            // Still allow native-vs-Meridian; generic_benchmark treats missing bare.so as 2-way.
+            System.err.println("note: mypyc(bare) control compile failed; "
+                    + "bench will compare native vs Meridian only");
         }
 
-        // Ensure annotated .py name matches generic_benchmark expectations:
-        // work_dir contains <bare>.py, <ann>.py, both .so files.
-        // We already wrote <module>.py as annotated; also keep a copy as <module>_gcp.py
-        // when module name equals bare — use distinct names.
-        String gcpName = req.moduleName();
-        // Re-copy native artifacts next to sources (compile already wrote into outputDir).
         if (annCompiled.outputFile() != null) {
             Path dest = req.outputDir().resolve(annCompiled.outputFile().getName());
             if (!dest.toAbsolutePath().equals(annCompiled.outputFile().toPath().toAbsolutePath())) {
@@ -130,7 +145,8 @@ public final class CompilePipeline {
         try (InputStream is = getClass().getClassLoader()
                 .getResourceAsStream("generic_benchmark.py")) {
             if (is == null) {
-                return "{\"error\":\"generic_benchmark.py resource missing\"}";
+                return new BenchRun("{\"error\":\"generic_benchmark.py resource missing\",\"ok\":false}",
+                        false);
             }
             Files.copy(is, benchScript, StandardCopyOption.REPLACE_EXISTING);
         }
@@ -140,8 +156,8 @@ public final class CompilePipeline {
                 python,
                 benchScript.toAbsolutePath().toString(),
                 req.outputDir().toAbsolutePath().toString(),
-                bareName,
-                gcpName,
+                nativeName,
+                meridianName,
                 req.benchCasesJson());
         pb.redirectErrorStream(false);
         Process proc = pb.start();
@@ -152,17 +168,25 @@ public final class CompilePipeline {
             stderr = proc.getErrorStream().readAllBytes();
             if (!proc.waitFor(180, TimeUnit.SECONDS)) {
                 proc.destroyForcibly();
-                return "{\"error\":\"benchmark timed out\"}";
+                return new BenchRun("{\"error\":\"benchmark timed out\",\"ok\":false}", false);
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            return "{\"error\":\"benchmark interrupted\"}";
+            return new BenchRun("{\"error\":\"benchmark interrupted\",\"ok\":false}", false);
         }
-        if (proc.exitValue() != 0) {
-            return "{\"error\":\"benchmark failed\",\"stderr\":"
-                    + jsonEscape(new String(stderr, StandardCharsets.UTF_8)) + "}";
+
+        String out = new String(stdout, StandardCharsets.UTF_8).trim();
+        String err = new String(stderr, StandardCharsets.UTF_8).trim();
+        if (out.isBlank() && !err.isBlank()) {
+            out = "{\"error\":" + jsonEscape(err) + ",\"ok\":false}";
         }
-        return new String(stdout, StandardCharsets.UTF_8);
+        boolean ok = proc.exitValue() == 0 && !out.contains("\"ok\": false")
+                && !out.contains("\"ok\":false");
+        if (proc.exitValue() != 0 && out.isBlank()) {
+            out = "{\"error\":" + jsonEscape(err) + ",\"ok\":false}";
+            ok = false;
+        }
+        return new BenchRun(out, ok);
     }
 
     private static String detectPython() {

@@ -246,11 +246,19 @@ public final class MeridianCli {
         }
         System.err.println("Compiled:  " + outcome.compileResult().outputFile());
         if (outcome.benchJson() != null) {
+            // 1) compile done  2) eval vs native  3) performance vs native
+            System.err.println("Eval check: Meridian result vs native CPython");
+            System.err.println("Perf check: Meridian mypyc vs native CPython");
             System.out.println(outcome.benchJson());
-        } else {
-            System.out.print(outcome.annotatedSource());
-            if (!outcome.annotatedSource().endsWith("\n")) System.out.println();
+            if (!outcome.benchOk()) {
+                System.err.println("FAIL: native eval correctness did not pass");
+                return 1;
+            }
+            System.err.println("PASS: results match native; see speedup_vs_native in JSON");
+            return 0;
         }
+        System.out.print(outcome.annotatedSource());
+        if (!outcome.annotatedSource().endsWith("\n")) System.out.println();
         return 0;
     }
 
@@ -288,13 +296,16 @@ public final class MeridianCli {
         ps.println("  meridian compile <file.py> [-o out_dir]");
         ps.println("      [--calls usage.py | --calls-inline CODE]");
         ps.println("      [--specialize | --no-specialize] [--annotate-all]");
-        ps.println("      [--bench cases.json]");
-        ps.println("      a) begin compile  b) annotate (+ specialize multi-concrete");
-        ps.println("         Outline/GCP call-site bindings)  c) mypyc  d) optional bench");
+        ps.println("      [--bench cases.json|inline-json]");
+        ps.println("      Flow with --bench:");
+        ps.println("        1) Meridian annotate + mypyc compile");
+        ps.println("        2) eval result == native CPython");
+        ps.println("        3) eval performance vs native CPython");
+        ps.println("      cases JSON: [[\"fn\",[args],iters], ...]");
         ps.println("  meridian version | help");
         ps.println();
-        ps.println("Specialization is generic: every distinct concrete call-site type");
-        ps.println("tuple (str/int/float/list/…) gets a clone + isinstance dispatcher.");
+        ps.println("Specialization: every distinct concrete call-site type tuple");
+        ps.println("gets a clone + isinstance dispatcher.");
         ps.println("See meridian-python/docs/mypyc-compile-and-ide-plan.md");
     }
 

@@ -34,17 +34,21 @@ the proof surface until Part A is resumed.
 ### Target user flow
 
 ```text
-a) begin compile
-   naked .py (+ optional usage / entry calls)
+a) meridian compile
+   naked .py (+ optional usage) → Meridian annotate/specialize → mypyc
         ↓
-b) annotate
-   SAFE_PARTIAL by default; specialize when multi-type call sites exist
-   verify with existing ConverterE2E / generic_benchmark gates
+b) check eval result vs native
+   Meridian(.so) return value == CPython(naked) return value
         ↓
-c) mypyc compile annotated (+ helpers when needed)
-        ↓
-d) check performance
-   CPython(naked) vs mypyc(bare) vs mypyc(Meridian)
+c) check eval performance vs native
+   speedup_vs_native = native_ns / meridian_ns
+   (optional control: mypyc bare)
+```
+
+CLI:
+```bash
+meridian compile lib.py --calls-inline 'sum_range(1000)' \
+  --bench '[["sum_range",[1000],20000]]' -o /tmp/out
 ```
 
 ### Current baseline (already in tree)

@@ -71,4 +71,26 @@ class MeridianCliTest {
                 }),
                 "mypyc native extension expected in " + outDir);
     }
+
+    @Test
+    void compile_bench_matches_native_eval() throws Exception {
+        Path py = tmp.resolve("sumcli.py");
+        Files.writeString(py, """
+                def sum_range(n):
+                    total = 0
+                    for i in range(n):
+                        total += i
+                    return total
+                """);
+        Path outDir = tmp.resolve("sumcli_out");
+        int code = MeridianCli.run(new String[]{
+                "compile", py.toString(),
+                "-o", outDir.toString(),
+                "--calls-inline", "sum_range(200)\n",
+                "--annotate-all",
+                "--bench", "[[\"sum_range\",[800],12000]]"
+        });
+        assertEquals(0, code, "compile --bench must pass native correctness");
+        assertTrue(Files.isRegularFile(outDir.resolve("sumcli_native.py")));
+    }
 }
