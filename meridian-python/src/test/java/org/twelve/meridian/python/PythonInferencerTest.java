@@ -49,6 +49,45 @@ class PythonInferencerTest {
                 "Syntax error should throw PythonParseException");
     }
 
+    @Test
+    void bridge_parses_ellipsis_and_type_ignore() {
+        PythonAstBridge bridge = new PythonAstBridge();
+        var ellipsis = bridge.parse("""
+                from typing import Callable
+                def f(x=..., cb: Callable[..., int] = None):
+                    return x
+                """);
+        assertEquals("Module", ellipsis.get("_type"));
+
+        var ignored = bridge.parse("""
+                def f(x):  # type: ignore
+                    y = x  # type: ignore[attr-defined]
+                    return y
+                """);
+        assertEquals("Module", ignored.get("_type"));
+    }
+
+    @Test
+    void infer_return_await_does_not_crash() {
+        String src = """
+                async def load(x):
+                    return await x.fetch()
+                """;
+        AST ast = assertDoesNotThrow(() -> inferencer.infer(src));
+        assertNotNull(ast);
+    }
+
+    @Test
+    void infer_ellipsis_default_does_not_crash() {
+        String src = """
+                from typing import Callable
+                def f(x=..., cb: Callable[..., int] = None):
+                    return x
+                """;
+        AST ast = assertDoesNotThrow(() -> inferencer.infer(src));
+        assertNotNull(ast);
+    }
+
     // ── converter ─────────────────────────────────────────────────────────────
 
     @Test

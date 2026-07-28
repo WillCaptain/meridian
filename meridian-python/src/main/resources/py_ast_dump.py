@@ -20,21 +20,33 @@ import sys
 
 
 def _node(n):
-    """Recursively convert ast.AST → dict, list, or scalar."""
+    """Recursively convert ast.AST → dict, list, or JSON-safe scalar."""
     if isinstance(n, ast.AST):
         d = {"_type": n.__class__.__name__}
+        # TypeIgnore has lineno but not col_offset on some CPython versions.
         if hasattr(n, "lineno"):
             d["_line"] = n.lineno
-            d["_col"] = n.col_offset
+            d["_col"] = getattr(n, "col_offset", 0)
         for field, value in ast.iter_fields(n):
+            # Meridian does not consume type-ignore comments; skip to avoid
+            # fragile TypeIgnore location fields across Python versions.
+            if field == "type_ignores":
+                continue
             d[field] = _node(value)
         return d
     if isinstance(n, list):
         return [_node(item) for item in n]
-    # scalars: int, float, str, bool, None, bytes → keep as-is (bytes → hex string)
     if isinstance(n, bytes):
         return n.hex()
-    return n
+    # Ellipsis / complex / other non-JSON scalars must be encoded explicitly.
+    # ConstantConverter recognizes {"_ellipsis": true}.
+    if n is ...:
+        return {"_ellipsis": True}
+    if isinstance(n, complex):
+        return {"__meridian__": "complex", "real": n.real, "imag": n.imag}
+    if isinstance(n, (int, float, str, bool)) or n is None:
+        return n
+    return {"__meridian__": "repr", "value": repr(n)}
 
 
 def _main():

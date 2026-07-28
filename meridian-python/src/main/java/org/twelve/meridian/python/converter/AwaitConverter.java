@@ -6,11 +6,11 @@ import org.twelve.gcp.ast.Node;
 import java.util.Map;
 
 /**
- * Handles {@code Await}: unwrap {@code await expr} to {@code expr} for typing.
+ * Handles {@code Await}: unwraps {@code await expr} to {@code expr} for typing.
  *
- * <p>Meridian does not model awaitables separately yet; the awaited expression's
- * type is what callers (including {@code return await ...}) need. Leaving Await
- * as a no-op made {@link ReturnConverter} receive null and crash.
+ * <p>GCP has no await node; the awaited expression's result type is what callers
+ * (including {@code return await ...}) need. Leaving Await as NoOp made
+ * {@link ReturnConverter} receive null and NPE inside {@code ReturnStatement}.
  */
 public class AwaitConverter extends PyConverter {
 

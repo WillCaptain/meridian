@@ -1,0 +1,37 @@
+{
+  "suite": "converter-e2e",
+  "title": "Converter E2E — Meridian vs bare mypyc / native",
+  "product": "meridian",
+  "claim_boundary": "Meridian annotate→mypyc product eval; not GCP TOPLAS / Outline-port SOTA",
+  "captured_at": "20260728T063108Z",
+  "payload": {
+  "avg_speedup_bare": 0.9293,
+  "avg_speedup_meridian": 11.2418,
+  "converters": [
+  {"converter": "assert_isinstance", "avg_bare": 0.7, "avg_meridian": 15.84, "meridian_over_bare": 22.53, "func_count": 3},
+  {"converter": "aug_assign", "avg_bare": 0.86, "avg_meridian": 15.43, "meridian_over_bare": 18.01, "func_count": 3},
+  {"converter": "builtin_sorted", "avg_bare": 1.05, "avg_meridian": 10.45, "meridian_over_bare": 9.92, "func_count": 3},
+  {"converter": "builtins", "avg_bare": 0.91, "avg_meridian": 3.69, "meridian_over_bare": 4.06, "func_count": 3},
+  {"converter": "class_method", "avg_bare": 0.78, "avg_meridian": 2.12, "meridian_over_bare": 2.74, "func_count": 2},
+  {"converter": "cross_module", "avg_bare": 0.93, "avg_meridian": 17.49, "meridian_over_bare": 18.81, "func_count": 2},
+  {"converter": "default_params", "avg_bare": 0.88, "avg_meridian": 13.99, "meridian_over_bare": 15.9, "func_count": 3},
+  {"converter": "dict_type", "avg_bare": 0.97, "avg_meridian": 2.55, "meridian_over_bare": 2.63, "func_count": 3},
+  {"converter": "enumerate_zip", "avg_bare": 0.81, "avg_meridian": 23.39, "meridian_over_bare": 29.0, "func_count": 3},
+  {"converter": "for_loop_var", "avg_bare": 0.86, "avg_meridian": 17.96, "meridian_over_bare": 20.88, "func_count": 3},
+  {"converter": "fstring", "avg_bare": 0.78, "avg_meridian": 16.42, "meridian_over_bare": 21.04, "func_count": 2},
+  {"converter": "ifexp", "avg_bare": 0.92, "avg_meridian": 20.15, "meridian_over_bare": 21.9, "func_count": 3},
+  {"converter": "lambda", "avg_bare": 0.77, "avg_meridian": 21.05, "meridian_over_bare": 27.22, "func_count": 3},
+  {"converter": "list_method", "avg_bare": 0.93, "avg_meridian": 2.81, "meridian_over_bare": 3.03, "func_count": 2},
+  {"converter": "list_param", "avg_bare": 0.89, "avg_meridian": 4.58, "meridian_over_bare": 5.17, "func_count": 3},
+  {"converter": "listcomp", "avg_bare": 1.0, "avg_meridian": 3.54, "meridian_over_bare": 3.56, "func_count": 3},
+  {"converter": "match_case", "avg_bare": 0.98, "avg_meridian": 23.74, "meridian_over_bare": 24.31, "func_count": 3},
+  {"converter": "method_call", "avg_bare": 1.01, "avg_meridian": 3.99, "meridian_over_bare": 3.96, "func_count": 3},
+  {"converter": "module_lambda_to_def", "avg_bare": 1.02, "avg_meridian": 2.27, "meridian_over_bare": 2.23, "func_count": 1},
+  {"converter": "named_expr", "avg_bare": 1.02, "avg_meridian": 22.98, "meridian_over_bare": 22.61, "func_count": 3},
+  {"converter": "starred", "avg_bare": 1.0, "avg_meridian": 7.29, "meridian_over_bare": 7.29, "func_count": 3},
+  {"converter": "subscript", "avg_bare": 1.07, "avg_meridian": 1.67, "meridian_over_bare": 1.56, "func_count": 3},
+  {"converter": "tuple_unpack", "avg_bare": 1.04, "avg_meridian": 11.97, "meridian_over_bare": 11.51, "func_count": 3},
+  {"converter": "yield_gen", "avg_bare": 1.15, "avg_meridian": 4.43, "meridian_over_bare": 3.85, "func_count": 2}
+]
+}
+}
