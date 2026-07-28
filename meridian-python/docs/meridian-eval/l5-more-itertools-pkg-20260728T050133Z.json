@@ -3,7 +3,7 @@
   "title": "L5 upstream more-itertools package surface",
   "product": "meridian",
   "claim_boundary": "Meridian annotate→mypyc product eval; not GCP TOPLAS / Outline-port SOTA",
-  "captured_at": "20260728T050156Z",
+  "captured_at": "20260728T050133Z",
   "payload": {
   "corpus" : "l5-more-itertools-pkg",
   "claim_boundary" : "Full recipes.py + selected more.py (v10.7.0); primary keeps Meridian params; deps annotation-stripped for mypyc; not entire more.py",
@@ -16,63 +16,63 @@
   "return_coverage" : 0.257,
   "mypyc_compile_ok" : true,
   "correct_rate" : 1.0,
-  "avg_speedup_vs_native" : 1.078,
+  "avg_speedup_vs_native" : 1.17,
   "gates_pass" : true,
   "partially_unannotated_funcs" : [ "mi_recipes.take", "mi_recipes.tabulate", "mi_recipes.tail", "mi_recipes.consume", "mi_recipes.nth", "mi_recipes.all_equal", "mi_recipes.quantify", "mi_recipes.pad_none", "mi_recipes.ncycles", "mi_recipes.dotproduct", "mi_recipes.flatten", "mi_recipes.repeatfunc", "mi_recipes._pairwise", "mi_recipes._zip_equal_generator", "mi_recipes._zip_equal", "mi_recipes.grouper", "mi_recipes.partition", "mi_recipes.powerset", "mi_recipes.unique_everseen", "mi_recipes.unique_justseen", "mi_recipes.unique", "mi_recipes.iter_except", "mi_recipes.first_true", "mi_recipes.random_product", "mi_recipes.random_permutation", "mi_recipes.random_combination", "mi_recipes.random_combination_with_replacement", "mi_recipes.nth_combination", "mi_recipes.prepend", "mi_recipes.before_and_after", "mi_recipes.triplewise", "mi_recipes._sliding_window_islice", "mi_recipes._sliding_window_deque", "mi_recipes.sliding_window", "mi_recipes.subslices", "mi_recipes.iter_index", "mi_recipes._batched", "mi_recipes.transpose", "mi_recipes.reshape", "mi_recipes.matmul", "mi_recipes._factor_pollard", "mi_recipes.factor", "mi_recipes.polynomial_eval", "mi_recipes.sum_of_squares", "mi_recipes.polynomial_derivative", "mi_recipes._shift_to_odd", "mi_recipes._strong_probable_prime", "mi_recipes.is_prime", "mi_recipes.loops", "mi_recipes.multinomial", "mi_more.chunked", "mi_more.first", "mi_more.last", "mi_more.nth_or_last", "mi_more.ilen", "mi_more.one", "mi_facade.take_list", "mi_facade.ncycles_list", "mi_facade.flatten_list", "mi_facade.quantify_bool", "mi_facade.nth_item", "mi_facade.all_equal_seq", "mi_facade.dotproduct_seq", "mi_facade.first_true_val", "mi_facade.ilen_seq" ],
   "rows" : [ {
     "func" : "take_list(3, [1, 2, 3, 4, 5, 6, 7, 8])",
     "correct" : true,
-    "native_ns" : 271.2,
-    "meridian_ns" : 200.1,
-    "speedup_vs_native" : 1.36
+    "native_ns" : 410.0,
+    "meridian_ns" : 341.6,
+    "speedup_vs_native" : 1.2
   }, {
     "func" : "quantify_bool([True, False, True, True])",
     "correct" : true,
-    "native_ns" : 183.1,
-    "meridian_ns" : 190.7,
-    "speedup_vs_native" : 0.96
+    "native_ns" : 349.1,
+    "meridian_ns" : 240.0,
+    "speedup_vs_native" : 1.45
   }, {
     "func" : "nth_item([1, 2, 3, 4, 5, 6, 7, 8], 3)",
     "correct" : true,
-    "native_ns" : 177.2,
-    "meridian_ns" : 172.3,
-    "speedup_vs_native" : 1.03
+    "native_ns" : 185.0,
+    "meridian_ns" : 198.0,
+    "speedup_vs_native" : 0.93
   }, {
     "func" : "all_equal_seq([3, 3, 3, 3])",
     "correct" : true,
-    "native_ns" : 236.3,
-    "meridian_ns" : 189.5,
-    "speedup_vs_native" : 1.25
+    "native_ns" : 254.5,
+    "meridian_ns" : 190.7,
+    "speedup_vs_native" : 1.33
   }, {
     "func" : "dotproduct_seq([10.0, 15.0, 12.0], [0.65, 0.8, 1.25])",
     "correct" : true,
-    "native_ns" : 243.0,
-    "meridian_ns" : 260.0,
-    "speedup_vs_native" : 0.93
+    "native_ns" : 248.9,
+    "meridian_ns" : 247.3,
+    "speedup_vs_native" : 1.01
   }, {
     "func" : "first_true_val([0, 0, 7, 0])",
     "correct" : true,
-    "native_ns" : 132.9,
-    "meridian_ns" : 123.7,
-    "speedup_vs_native" : 1.07
+    "native_ns" : 162.0,
+    "meridian_ns" : 124.0,
+    "speedup_vs_native" : 1.31
   }, {
     "func" : "ilen_seq([1, 2, 3, 4, 5, 6, 7, 8])",
     "correct" : true,
-    "native_ns" : 440.9,
-    "meridian_ns" : 415.9,
-    "speedup_vs_native" : 1.06
+    "native_ns" : 439.0,
+    "meridian_ns" : 426.2,
+    "speedup_vs_native" : 1.03
   }, {
     "func" : "chunked_lens([1, 2, 3, 4, 5, 6, 7, 8], 3)",
     "correct" : true,
-    "native_ns" : 1159.7,
-    "meridian_ns" : 1181.0,
-    "speedup_vs_native" : 0.98
+    "native_ns" : 1192.6,
+    "meridian_ns" : 946.9,
+    "speedup_vs_native" : 1.26
   }, {
     "func" : "flatten_list([[0, 1], [2, 3], [4]])",
     "correct" : true,
-    "native_ns" : 263.9,
-    "meridian_ns" : 250.0,
-    "speedup_vs_native" : 1.06
+    "native_ns" : 264.3,
+    "meridian_ns" : 261.1,
+    "speedup_vs_native" : 1.01
   } ]
 }
 }

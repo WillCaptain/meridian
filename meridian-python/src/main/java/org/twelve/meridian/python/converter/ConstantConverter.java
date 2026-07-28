@@ -22,6 +22,10 @@ public class ConstantConverter extends PyConverter {
         if (val == null) {
             return LiteralNode.parse(ast, new Token<>(NullLiteral.INSTANCE, 0));
         }
+        // py_ast_dump encodes Ellipsis as {"_ellipsis": true} (not JSON-serializable otherwise).
+        if (val instanceof Map<?, ?> map && Boolean.TRUE.equals(map.get("_ellipsis"))) {
+            return LiteralNode.parse(ast, new Token<>("...", 0));
+        }
         if (val instanceof Integer) return LiteralNode.parse(ast, new Token<>((long)(int)(Integer) val, 0));
         if (val instanceof Long) return LiteralNode.parse(ast, new Token<>((Long) val, 0));
         if (val instanceof Double) return LiteralNode.parse(ast, new Token<>((Double) val, 0));

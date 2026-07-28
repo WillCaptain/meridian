@@ -20,10 +20,17 @@ public class ReturnConverter extends PyConverter {
     @Override
     public Node convert(AST ast, Map<String, Object> pyNode, Node parent) {
         Map<String, Object> valueNode = mapOf(pyNode, "value");
-        Expression retVal = valueNode != null
-                ? (Expression) dispatch(ast, valueNode)
-                // bare `return` → return None (Python semantics)
-                : LiteralNode.parse(ast, new Token<>(NullLiteral.INSTANCE, 0));
+        Expression retVal = null;
+        if (valueNode != null) {
+            Node converted = dispatch(ast, valueNode);
+            if (converted instanceof Expression expr) {
+                retVal = expr;
+            }
+        }
+        // bare `return`, or unsupported/unconverted value → return None
+        if (retVal == null) {
+            retVal = LiteralNode.parse(ast, new Token<>(NullLiteral.INSTANCE, 0));
+        }
         ReturnStatement ret = new ReturnStatement(retVal);
         addStatement(ast, parent, ret);
         return ret;

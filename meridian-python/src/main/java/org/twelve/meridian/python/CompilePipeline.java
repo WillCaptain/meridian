@@ -7,6 +7,9 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
@@ -14,6 +17,10 @@ import java.util.concurrent.TimeUnit;
 /**
  * Product <em>compile</em> surface: naked Python → annotate/specialize →
  * tree-shake unreachable defs → mypyc → optional native eval check.
+ *
+ * <p>Multi-module packages use {@link #runPackage(PackageRequest)} with
+ * {@link MypycAnnotationPrep.Mode#KEEP_DEPS} and optional
+ * {@link HotCompileSelector} import closure (L6 productized).
  *
  * <p>IDE hover facts (including {@code Union}/{@code Optional}) live on
  * {@link IdeTypeSurface} — not this pipeline.
@@ -45,6 +52,40 @@ public final class CompilePipeline {
             boolean specialized,
             Map<String, FunctionSpecializer.FuncSpecializations> plan,
             Set<String> prunedFunctions
+    ) {}
+
+    /**
+     * Multi-module package compile (L5/L6 shape).
+     *
+     * @param compileModules explicit mypyc set; ignored when {@code compileImportClosure}
+     * @param compileImportClosure when true, mypyc the import closure of primary
+     *                             ({@link HotCompileSelector}); else empty list → all modules
+     * @param annotationMode {@link MypycAnnotationPrep.Mode} wire name (default strip_deps)
+     */
+    public record PackageRequest(
+            Map<String, String> modules,
+            String primaryModule,
+            String usageSource,
+            List<String> compileModules,
+            boolean compileImportClosure,
+            String annotationMode,
+            AnnotationPolicy policy,
+            Path outputDir
+    ) {
+        public PackageRequest {
+            if (compileModules == null) {
+                compileModules = List.of();
+            }
+        }
+    }
+
+    public record PackageOutcome(
+            Map<String, String> annotatedSources,
+            Map<String, String> mypycSources,
+            List<String> compileModules,
+            MypycAnnotationPrep.Mode annotationMode,
+            Path primaryFile,
+            MypycRunner.CompileResult compileResult
     ) {}
 
     private final PythonInferencer inferencer = new PythonInferencer();
@@ -119,6 +160,100 @@ public final class CompilePipeline {
 
         return new Outcome(annotated, annFile, compiled, benchJson, benchOk,
                 specialized, plan, pruned);
+    }
+
+    /**
+     * Annotate every package module with shared usage, prepare for mypyc via
+     * {@link MypycAnnotationPrep}, materialize all modules, compile the hot set.
+     */
+    public PackageOutcome runPackage(PackageRequest req) throws IOException {
+        if (req.modules() == null || req.modules().isEmpty()) {
+            throw new IllegalArgumentException("modules");
+        }
+        if (req.primaryModule() == null || req.primaryModule().isBlank()) {
+            throw new IllegalArgumentException("primaryModule");
+        }
+        if (!req.modules().containsKey(req.primaryModule())) {
+            throw new IllegalArgumentException("primary module missing: " + req.primaryModule());
+        }
+        if (req.outputDir() == null) {
+            throw new IllegalArgumentException("outputDir");
+        }
+        Files.createDirectories(req.outputDir());
+
+        AnnotationPolicy policy = req.policy() == null
+                ? AnnotationPolicy.defaultPolicy()
+                : req.policy();
+        writer.withPolicy(policy);
+
+        String usage = req.usageSource() == null ? "" : req.usageSource();
+        Map<String, String> annotated = annotatePackage(req.modules(), usage);
+
+        MypycAnnotationPrep.Mode mode = MypycAnnotationPrep.Mode.parse(req.annotationMode());
+        Map<String, String> prepared = new LinkedHashMap<>();
+        for (Map.Entry<String, String> e : annotated.entrySet()) {
+            prepared.put(e.getKey(), MypycAnnotationPrep.prepare(
+                    e.getKey(), e.getValue(), req.primaryModule(), mode));
+        }
+
+        List<String> compileNames;
+        if (req.compileImportClosure()) {
+            compileNames = HotCompileSelector.importClosure(req.primaryModule(), req.modules());
+        } else if (req.compileModules() == null || req.compileModules().isEmpty()) {
+            compileNames = new ArrayList<>(req.modules().keySet());
+        } else {
+            compileNames = new ArrayList<>(req.compileModules());
+        }
+
+        for (Map.Entry<String, String> e : prepared.entrySet()) {
+            Files.writeString(req.outputDir().resolve(e.getKey() + ".py"), e.getValue(),
+                    StandardCharsets.UTF_8);
+        }
+
+        List<File> compileFiles = new ArrayList<>();
+        File primaryFile = null;
+        for (String name : compileNames) {
+            if (!prepared.containsKey(name)) {
+                throw new IllegalArgumentException("compile module missing: " + name);
+            }
+            File f = req.outputDir().resolve(name + ".py").toFile();
+            compileFiles.add(f);
+            if (name.equals(req.primaryModule())) {
+                primaryFile = f;
+            }
+        }
+        if (primaryFile == null) {
+            throw new IllegalArgumentException(
+                    "primary must be in compile set: " + req.primaryModule());
+        }
+
+        MypycRunner.CompileResult compiled =
+                mypyc.compile(compileFiles, req.outputDir().toFile(), primaryFile);
+
+        return new PackageOutcome(annotated, prepared, List.copyOf(compileNames), mode,
+                primaryFile.toPath(), compiled);
+    }
+
+    private Map<String, String> annotatePackage(Map<String, String> modules, String usage)
+            throws IOException {
+        Map<String, String> out = new LinkedHashMap<>();
+        for (String name : modules.keySet()) {
+            PythonInferencer inf = new PythonInferencer();
+            for (Map.Entry<String, String> e : modules.entrySet()) {
+                if (!e.getKey().equals(name)) {
+                    inf.registerModule(e.getKey(), e.getValue());
+                }
+            }
+            if (usage != null && !usage.isBlank()) {
+                PythonInferencer.ContextInferResult ctx =
+                        inf.inferWithContextDetailed(modules.get(name), usage);
+                out.put(name, writer.annotate(modules.get(name), ctx));
+            } else {
+                PythonInferenceResult inferred = inf.inferDetailed(modules.get(name));
+                out.put(name, writer.annotate(modules.get(name), inferred));
+            }
+        }
+        return out;
     }
 
     private record BenchRun(String json, boolean ok) {}

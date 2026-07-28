@@ -15,6 +15,22 @@ if [[ ! -f "$JAR" ]]; then
   need_build=1
 elif ! jar tf "$JAR" 2>/dev/null | grep -q 'org/twelve/meridian/python/cli/MeridianCli.class'; then
   need_build=1
+elif [[ "$MODULE/pom.xml" -nt "$JAR" ]]; then
+  need_build=1
+elif python3 - "$JAR" "$MODULE/src" <<'PY'
+import os
+import sys
+
+jar_mtime = os.path.getmtime(sys.argv[1])
+for root, _, files in os.walk(sys.argv[2]):
+    for name in files:
+        if name.endswith((".java", ".py", ".json")):
+            if os.path.getmtime(os.path.join(root, name)) > jar_mtime:
+                raise SystemExit(0)
+raise SystemExit(1)
+PY
+then
+  need_build=1
 fi
 
 if [[ "$need_build" -eq 1 ]]; then

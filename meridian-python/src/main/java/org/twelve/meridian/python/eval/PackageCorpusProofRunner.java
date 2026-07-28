@@ -3,6 +3,9 @@ package org.twelve.meridian.python.eval;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.twelve.meridian.python.AnnotationPolicy;
+import org.twelve.meridian.python.CompilePipeline;
+import org.twelve.meridian.python.HotCompileSelector;
+import org.twelve.meridian.python.MypycAnnotationPrep;
 import org.twelve.meridian.python.MypycRunner;
 import org.twelve.meridian.python.PythonAnnotationWriter;
 import org.twelve.meridian.python.PythonInferencer;
@@ -20,28 +23,20 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
-import java.util.regex.Pattern;
 
 /**
  * L3 multi-module corpus proof: registerModule import graph → annotate each
  * module → mypyc multi-file compile → native correctness / speedup.
+ *
+ * <p>Annotation prep and mypyc compile delegate to {@link CompilePipeline#runPackage}
+ * / {@link MypycAnnotationPrep} (same product surface as {@code meridian compile --pkg}).
  */
 public final class PackageCorpusProofRunner {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
-    /** Meridian sometimes over-widens scalar returns to list[T]; mypyc rejects those. */
-    private static final Pattern BAD_LIST_RETURN = Pattern.compile(
-            "(?m)^(def\\s+[A-Za-z_][A-Za-z0-9_]*\\s*\\([^)]*\\))\\s*->\\s*list\\[[^\\]]+\\]\\s*:");
 
     /**
-     * How Meridian annotations are prepared for mypyc.
-     * <ul>
-     *   <li>{@code strip_deps} — L5 default: strip all anns on non-primary modules</li>
-     *   <li>{@code keep} — keep param anns on every module; strip returns / AnnAssign</li>
-     *   <li>{@code keep_deps} — L6: keep param anns on non-primary (hot) modules;
-     *       strip all on primary facade (avoids cross-module over-widen)</li>
-     *   <li>{@code strip_all} — erase every annotation before mypyc</li>
-     * </ul>
+     * How Meridian annotations are prepared for mypyc — see {@link MypycAnnotationPrep.Mode}.
      */
     public record PackageSpec(
             String corpusId,
@@ -89,8 +84,8 @@ public final class PackageCorpusProofRunner {
         }
     }
 
-    private final MypycRunner mypyc = new MypycRunner();
     private final PythonAnnotationWriter writer = new PythonAnnotationWriter();
+    private final CompilePipeline pipeline = new CompilePipeline();
 
     public CorpusProofRunner.Report evaluate(PackageSpec spec, Path workDir) throws IOException {
         Files.createDirectories(workDir);
@@ -110,44 +105,32 @@ public final class PackageCorpusProofRunner {
         Map<String, String> annotatedCoverage = annotateAll(spec.modules(), spec.coverageUsage());
         AnnotationCoverage.Stats cov = aggregateCoverage(annotatedCoverage);
 
-        // Gates 2–4 — SAFE_PARTIAL annotate → optional sanitize → mypyc (+ optional module subset).
-        Map<String, String> annotatedCompile = annotateAll(spec.modules(), spec.benchUsage());
+        // Gates 2–4 — product package compile (annotate → prep → selective mypyc).
         String mode = spec.annotationMode() == null || spec.annotationMode().isBlank()
                 ? "strip_deps" : spec.annotationMode().toLowerCase(Locale.ROOT);
-        Map<String, String> repaired = new LinkedHashMap<>();
-        for (Map.Entry<String, String> e : annotatedCompile.entrySet()) {
-            repaired.put(e.getKey(), prepareForMypyc(e.getKey(), e.getValue(),
-                    spec.primaryModule(), mode));
-        }
-        annotatedCompile = repaired;
-
-        List<String> compileNames = spec.compileModules() == null || spec.compileModules().isEmpty()
-                ? new ArrayList<>(spec.modules().keySet())
-                : new ArrayList<>(spec.compileModules());
-        List<File> compileFiles = new ArrayList<>();
-        File primaryFile = null;
-        // Always materialize every module (imports / native lane); mypyc only the compile set.
-        for (Map.Entry<String, String> e : annotatedCompile.entrySet()) {
-            Path p = meridianDir.resolve(e.getKey() + ".py");
-            Files.writeString(p, e.getValue(), StandardCharsets.UTF_8);
-        }
-        for (String name : compileNames) {
-            if (!annotatedCompile.containsKey(name)) {
-                throw new IllegalArgumentException("compile module missing: " + name);
-            }
-            Path p = meridianDir.resolve(name + ".py");
-            compileFiles.add(p.toFile());
-            if (name.equals(spec.primaryModule())) {
-                primaryFile = p.toFile();
-            }
-        }
-        if (primaryFile == null) {
-            throw new IllegalArgumentException("primary module missing: " + spec.primaryModule());
+        List<String> compileModules = spec.compileModules() == null
+                ? List.of() : spec.compileModules();
+        boolean useImportClosure = compileModules.isEmpty()
+                && "keep_deps".equals(mode);
+        // keep_deps with empty compile_modules → import closure (L6 default product behavior).
+        // Other modes with empty list still compile every module (L5).
+        if (useImportClosure) {
+            compileModules = HotCompileSelector.importClosure(
+                    spec.primaryModule(), spec.modules());
         }
 
-        MypycRunner.CompileResult compiled =
-                mypyc.compile(compileFiles, meridianDir.toFile(), primaryFile);
+        CompilePipeline.PackageOutcome pkg = pipeline.runPackage(new CompilePipeline.PackageRequest(
+                spec.modules(),
+                spec.primaryModule(),
+                spec.benchUsage(),
+                compileModules,
+                false,
+                mode,
+                AnnotationPolicy.SAFE_PARTIAL,
+                meridianDir
+        ));
 
+        MypycRunner.CompileResult compiled = pkg.compileResult();
         boolean compileOk = compiled.success();
         String compileErr = compileOk ? null : (
                 (compiled.stderr() == null ? "" : compiled.stderr())
@@ -155,6 +138,8 @@ public final class PackageCorpusProofRunner {
         if (!compileOk && (compileErr == null || compileErr.isBlank())) {
             compileErr = "mypyc failed with empty stderr/stdout; exit=" + compiled.exitCode();
         }
+
+        Map<String, String> annotatedCompile = pkg.mypycSources();
 
         List<CorpusProofRunner.BenchRow> rows = new ArrayList<>();
         double correctRate = 0;
@@ -230,64 +215,16 @@ public final class PackageCorpusProofRunner {
     }
 
     static String repairReturns(String annotated) {
-        if (annotated == null) return null;
-        return BAD_LIST_RETURN.matcher(annotated).replaceAll("$1:");
+        return MypycAnnotationPrep.repairReturns(annotated);
     }
 
     static String prepareForMypyc(String module, String annotated, String primary, String mode) {
-        String src = repairReturns(annotated);
-        return switch (mode) {
-            case "keep" -> stripAnnotations(src, "returns");
-            case "keep_deps" -> module.equals(primary)
-                    ? stripAnnotations(src, "all")
-                    : stripAnnotations(src, "returns");
-            case "strip_all" -> stripAnnotations(src, "all");
-            default -> // strip_deps
-                    module.equals(primary)
-                            ? stripAnnotations(src, "returns")
-                            : stripAnnotations(src, "all");
-        };
+        return MypycAnnotationPrep.prepare(module, annotated, primary,
+                MypycAnnotationPrep.Mode.parse(mode));
     }
 
-    /**
-     * AST-strip annotations via bundled {@code strip_annotations.py}.
-     * Falls back to {@link #repairReturns} if the helper is unavailable.
-     */
     static String stripAnnotations(String source, String mode) {
-        if (source == null) return null;
-        try {
-            Path script = Files.createTempFile("strip_annotations", ".py");
-            try (InputStream is = PackageCorpusProofRunner.class.getClassLoader()
-                    .getResourceAsStream("strip_annotations.py")) {
-                if (is == null) {
-                    return repairReturns(source);
-                }
-                Files.copy(is, script, StandardCopyOption.REPLACE_EXISTING);
-            }
-            ProcessBuilder pb = new ProcessBuilder(detectPython(),
-                    script.toAbsolutePath().toString(), mode);
-            pb.redirectErrorStream(false);
-            Process proc = pb.start();
-            proc.getOutputStream().write(source.getBytes(StandardCharsets.UTF_8));
-            proc.getOutputStream().close();
-            byte[] stdout = proc.getInputStream().readAllBytes();
-            byte[] stderr = proc.getErrorStream().readAllBytes();
-            if (!proc.waitFor(60, TimeUnit.SECONDS)) {
-                proc.destroyForcibly();
-                return repairReturns(source);
-            }
-            if (proc.exitValue() != 0) {
-                String err = new String(stderr, StandardCharsets.UTF_8);
-                if (!err.isBlank()) {
-                    System.err.println("strip_annotations failed: " + err);
-                }
-                return repairReturns(source);
-            }
-            String out = new String(stdout, StandardCharsets.UTF_8);
-            return out.isBlank() ? repairReturns(source) : out;
-        } catch (Exception e) {
-            return repairReturns(source);
-        }
+        return MypycAnnotationPrep.stripAnnotations(source, mode);
     }
 
     private static AnnotationCoverage.Stats aggregateCoverage(Map<String, String> annotated) {

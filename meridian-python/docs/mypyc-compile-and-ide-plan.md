@@ -1,8 +1,8 @@
 # Meridian Plan — mypyc compile focus + parked IDE
 
 > Status: active (2026-07-28)  
-> Active focus: Meridian annotate → specialize → tree-shake → mypyc → performance  
-> Parked: IDE / LSP shell (API surface exists; no LSP host yet)
+> Active focus: Meridian annotate → specialize → tree-shake → package keep_deps → mypyc  
+> Parked (low priority): IDE / LSP host — agent-first workflows consume CLI/API; editor plugins are secondary
 
 ## Product stance
 
@@ -77,6 +77,12 @@ Goal: realtime developer feedback without forcing full annotate+compile.
 
 **Guardrail:** do not block mypyc compile productization on IDE host work.
 
+**Priority note (agent-first):** Most coding is now done via agents that call
+CLI/APIs. An editor hover/LSP host is nice-to-have for humans typing in-buffer;
+it is **not** on the critical path for Meridian’s annotate→mypyc product. Keep
+`IdeTypeSurface` as the shared type map; do not invest in I1–I5 until a concrete
+host consumer asks for it.
+
 ---
 
 ## Part B — Active focus: Meridian + mypyc compilation
@@ -86,6 +92,8 @@ Goal: realtime developer feedback without forcing full annotate+compile.
 ```text
 a) meridian compile
    naked .py (+ usage) → annotate/specialize → prune unreachable → mypyc
+   OR multi-module:
+   --pkg dir --primary facade --annotation-mode keep_deps [--compile-imports]
         ↓
 b) check eval result vs native
    Meridian(.so) return value == CPython(naked) return value
@@ -99,6 +107,11 @@ CLI:
 ```bash
 meridian compile lib.py --calls-inline 'sum_range(1000)' \
   --bench '[["sum_range",[1000],20000]]' -o /tmp/out
+
+# L6 productized: keep param anns on hot deps; mypyc import closure only
+meridian compile --pkg flat/ --primary mi_facade \
+  --annotation-mode keep_deps --compile-imports \
+  --calls calls_bench.py -o /tmp/out
 ```
 
 ### Current baseline (already in tree)
@@ -146,6 +159,18 @@ CPython(naked) / mypyc(bare) / mypyc(Meridian), isolated dependency lanes.
 
 `CompileSourcePruner` after annotate/specialize when usage is present.
 
+#### B6. Package keep_deps + hot import closure — done
+
+| Piece | Role |
+|-------|------|
+| `MypycAnnotationPrep` | `strip_deps` / `keep` / `keep_deps` / `strip_all` |
+| `HotCompileSelector` | mypyc set = import closure of primary |
+| `CompilePipeline.runPackage` | annotate all → prep → selective mypyc |
+| CLI `--pkg` / `--primary` / `--annotation-mode` / `--compile-imports` | product entry |
+| Corpus proofs | delegate prep/compile to the same surface |
+
+Default for `--pkg` is `keep_deps` with import-closure when compile set omitted.
+
 ---
 
 ## Part C — Outline optional / parametric call-site bindings (general)
@@ -174,15 +199,16 @@ Done / in tree
   B3 specialize + isinstance dispatcher ✅
   B3b library call-site plan + rewrite to clones ✅
   B5 tree-shake unreachable ✅
+  B6 package keep_deps + HotCompileSelector + CLI --pkg ✅
   I0 IdeTypeSurface API ✅
   C  poly fixtures ✅
   Dual-surface policy documented ✅
 
 Active
-  B2 keep CompilePipelineGateTest / SpecializeCallRewriteTest green
-  Expand real-usage fixtures; refresh docs/meridian-eval when benches change
+  B2 keep CompilePipelineGateTest / CompilePackageKeepDepsTest green
+  Next ladder: L7 real production app hot paths
 
-Later (parked)
+Later (parked, low priority — agent-first)
   Part A IDE/LSP host (I1–I5)
 ```
 
@@ -192,4 +218,5 @@ Later (parked)
 2. ~~Multi-concrete call-site fixture compiles and runs~~ ✅
 3. Unused library functions with usage present are absent from mypyc input ✅
 4. IDE hover map can show Union/Optional without going through compile filter ✅
-5. LSP host remains parked until Part A is explicitly resumed
+5. ~~`meridian compile --pkg` keep_deps + import closure~~ ✅
+6. LSP host remains parked (agent CLI is the primary consumer)

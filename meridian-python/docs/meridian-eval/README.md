@@ -64,3 +64,5 @@ L4 claim boundary: **upstream more-itertools v10.7.0 algorithm bodies (selected)
 L5 claim boundary: **nearly full recipes.py + selected more.py** as a multi-module package; primary facade keeps Meridian params; large deps are annotation-stripped before mypyc; not the entire `more.py`.
 
 L6 claim boundary: **nearly-full more.py function surface for coverage**; mypyc on hot subgraph with Meridian param annotations kept on `mi_hot` (`keep_deps`); larger inputs; not every class/thread helper.
+
+Product path (post-L6): `meridian compile --pkg <dir> --primary <mod> --annotation-mode keep_deps --compile-imports` — same prep/hot selection as L6, via `CompilePipeline.runPackage` / `HotCompileSelector` (no manual `mi_hot` carve required when import closure is enough).

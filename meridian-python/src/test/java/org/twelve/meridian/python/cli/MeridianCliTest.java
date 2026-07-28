@@ -127,6 +127,47 @@ class MeridianCliTest {
     }
 
     @Test
+    void compile_pkg_keep_deps_uses_import_closure() throws Exception {
+        Path pkg = tmp.resolve("pkg");
+        Files.createDirectories(pkg);
+        Files.writeString(pkg.resolve("mi_hot.py"), """
+                def add1(x):
+                    return x + 1
+                """);
+        Files.writeString(pkg.resolve("mi_facade.py"), """
+                from mi_hot import add1
+
+                def hot(n):
+                    total = 0
+                    for i in range(n):
+                        total += add1(i)
+                    return total
+                """);
+        Files.writeString(pkg.resolve("mi_extra.py"), """
+                def unused(x):
+                    return x
+                """);
+        Path outDir = tmp.resolve("pkg_cli_out");
+        int code = MeridianCli.run(new String[]{
+                "compile",
+                "--pkg", pkg.toString(),
+                "--primary", "mi_facade",
+                "--annotation-mode", "keep_deps",
+                "--compile-imports",
+                "--calls-inline", "from mi_facade import hot\nhot(20)\n",
+                "-o", outDir.toString()
+        });
+        assertEquals(0, code, "meridian compile --pkg keep_deps must pass");
+        assertTrue(Files.isRegularFile(outDir.resolve("mi_hot.py")));
+        assertTrue(Files.isRegularFile(outDir.resolve("mi_extra.py")),
+                "coverage-only still written");
+        assertTrue(Files.list(outDir).anyMatch(p -> {
+            String n = p.getFileName().toString();
+            return n.endsWith(".so") || n.endsWith(".pyd");
+        }));
+    }
+
+    @Test
     void compile_prunes_unused_and_benches_hot_path() throws Exception {
         Path py = tmp.resolve("prune_cli.py");
         Files.writeString(py, """

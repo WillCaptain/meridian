@@ -19,6 +19,7 @@ pipeline on unmodified Python — not the definition of the product.
 | [`MERIDIAN-SESSION-HANDOFF.md`](MERIDIAN-SESSION-HANDOFF.md) | Agent / session resume prompt |
 | [`meridian-python/spec/plan.md`](meridian-python/spec/plan.md) | Converter coverage backlog |
 | [`meridian-python/docs/`](meridian-python/docs/) | Experiments & feature coverage |
+| [`agent-skills/`](agent-skills/) | Host-neutral Meridian skill + Cursor/Codex/Claude Code adapters |
 
 ## Quick start (dev)
 
@@ -42,6 +43,19 @@ chmod +x bin/meridian
 Or: `mvn -q -f meridian-python/pom.xml exec:java -Dexec.args='infer file.py'`
 
 See [`REPRODUCE.md`](REPRODUCE.md). Product phases: [`MERIDIAN-PRODUCT-ROADMAP.md`](MERIDIAN-PRODUCT-ROADMAP.md).
+
+### Agent skill
+
+Use the portable Meridian skill to run type report → selective compile →
+correctness/performance gates → production artifact handoff:
+
+```bash
+python3 agent-skills/meridian/scripts/meridian_workflow.py check \
+  --source path/to/file.py --report-dir build/meridian-report
+```
+
+Cursor, Codex, and Claude Code installation adapters are documented under
+[`agent-skills/meridian/adapters/`](agent-skills/meridian/adapters/).
 
 ## TypeEvalPy micro progress (native Meridian)
 

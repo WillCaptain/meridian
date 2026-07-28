@@ -106,7 +106,8 @@ public class PythonGCPConverter {
         converters.put("Raise",         noop);
         converters.put("AsyncFor",      noop);
         converters.put("AsyncWith",     noop);
-        converters.put("Await",         noop);
+        // Await unwraps to the inner expression (needed for `return await ...`)
+        converters.put("Await",         new AwaitConverter(converters));
 
         // P11: generator type inference
         converters.put("Yield",         new YieldConverter(converters));
