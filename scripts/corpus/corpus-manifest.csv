@@ -1,0 +1,7 @@
+project,release,url,license,inference_stress
+more-itertools,v10.7.0,https://github.com/more-itertools/more-itertools,MIT,iterable/iterator protocol duck typing
+requests,v2.32.3,https://github.com/psf/requests,Apache-2.0,dynamic attribute materialization
+click,v8.1.7,https://github.com/pallets/click,BSD-3-Clause,decorator-driven dispatch
+bottle,v0.13.2,https://github.com/bottlepy/bottle,MIT,single-file dynamic routing
+itsdangerous,v2.2.0,https://github.com/pallets/itsdangerous,BSD-3-Clause,signer/serializer duck typing
+simplejson,v3.19.3,https://github.com/simplejson/simplejson,MIT,encoder/decoder dispatch
